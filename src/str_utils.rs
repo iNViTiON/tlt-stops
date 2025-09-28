@@ -26,6 +26,21 @@ pub struct LastData {
     pub last_number: Option<String>,
 }
 
+#[inline(always)]
+fn split_stops_field(stops_raw: &[u8]) -> worker::Result<Vec<String>> {
+    let count = memchr_iter(b',', stops_raw).count();
+    let mut stops = Vec::with_capacity(count + 1);
+    let mut start = 0usize;
+    for i in memchr_iter(b',', stops_raw) {
+        stops.push(String::from_utf8(stops_raw[start..i].to_owned()).expect("invalid stops data"));
+        start = i + 1;
+    }
+    if start < stops_raw.len() {
+        stops.push(String::from_utf8(stops_raw[start..].to_owned()).expect("invalid stops data"));
+    }
+    Ok(stops)
+}
+
 pub fn extract_route_data_from_line(line: &[u8], last_data: &mut LastData) -> Option<RouteData> {
     let mut start = 0usize;
 
@@ -33,6 +48,7 @@ pub fn extract_route_data_from_line(line: &[u8], last_data: &mut LastData) -> Op
     let mut route_num = None;
     let mut route_type = None;
     let mut direction = None;
+    let mut stops = Vec::new();
 
     for (col, i) in memchr_iter(b';', line)
         .chain(std::iter::once(line.len()))
@@ -68,6 +84,9 @@ pub fn extract_route_data_from_line(line: &[u8], last_data: &mut LastData) -> Op
                     str::from_utf8(&line[start..i]).ok()?,
                 )))
                 .filter(|s| !s.is_empty());
+            }
+            13 => {
+                stops = split_stops_field(&line[start..i]).ok()?;
                 break; // early exit after the last needed column
             }
             _ => {}
@@ -78,6 +97,7 @@ pub fn extract_route_data_from_line(line: &[u8], last_data: &mut LastData) -> Op
         number: route_num?.to_string(),
         route_type: route_type?.to_string(),
         directions: direction?,
+        stops,
     })
 }
 
@@ -145,14 +165,16 @@ pub async fn extract_route_data_from_buffer(
             type_entry
                 .entry(route_data.number.clone())
                 .and_modify(|group| {
-                    group.directions.push(route_data.directions.clone());
+                    group
+                        .directions
+                        .insert(route_data.directions.clone(), route_data.stops.clone());
                 })
                 .or_insert({
-                    let mut directions = Vec::with_capacity(2);
-                    directions.push(route_data.directions.clone());
+                    let mut directions = HashMap::with_capacity(2);
+                    directions.insert(route_data.directions, route_data.stops);
                     RouteGroup {
-                        number: route_data.number.clone(),
-                        route_type: route_data.route_type.clone(),
+                        number: route_data.number,
+                        route_type: route_data.route_type,
                         directions,
                     }
                 });

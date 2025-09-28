@@ -105,7 +105,7 @@ impl TransportService {
             }
             None => {
                 let reader = Self::get_routes_stream().await?;
-                let (mut buf, mut route_map, _, _, _) = reader
+                let (mut buf, route_map, _, _, _) = reader
                     .try_fold(
                         (
                             Vec::with_capacity(128 * 1024),
@@ -117,11 +117,6 @@ impl TransportService {
                         extract_route_data_from_buffer_fold,
                     )
                     .await?;
-                route_map.iter_mut().for_each(|(_, routes)| {
-                    routes.iter_mut().for_each(|(_, route_group)| {
-                        route_group.directions.sort_unstable();
-                    });
-                });
                 buf.shrink_to_fit();
                 (Some(buf), route_map)
             }

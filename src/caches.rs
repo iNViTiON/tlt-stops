@@ -63,9 +63,7 @@ impl Caches {
     }
 
     pub fn get_routes(&self) -> Option<Rc<Vec<u8>>> {
-        self.routes_raw
-            .borrow_mut()
-            .get().cloned()
+        self.routes_raw.borrow_mut().get().cloned()
     }
 
     pub fn set_types(&self, data: Rc<Vec<String>>) {

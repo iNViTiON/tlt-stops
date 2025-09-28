@@ -88,8 +88,7 @@ async fn get_routes_by_type(_req: Request, ctx: RouteContext<()>) -> Result<work
         let route_map = service.get_route_map().await?;
         let routes = route_map.get(route_type);
         if let Some(routes) = routes {
-            let mut routes = routes.keys()
-                .collect::<Vec<&String>>();
+            let mut routes = routes.keys().collect::<Vec<&String>>();
             routes.sort_unstable();
             Response::from_json(&routes)
         } else {
@@ -118,7 +117,9 @@ async fn get_directions_by_route_type_number(
         if let Some(routes) = routes {
             let route = routes.get(route_number);
             if let Some(route) = route {
-                Response::from_json(&route.directions)
+                let mut directions = route.directions.keys().collect::<Vec<&String>>();
+                directions.sort_unstable();
+                Response::from_json(&directions)
             } else {
                 Response::error("route number not found", 404)
             }
