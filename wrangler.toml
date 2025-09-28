@@ -1,0 +1,9 @@
+name = "tlt-stops"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-09-15"
+
+[build]
+command = "cargo install worker-build@0.1.4 && worker-build --release"
+
+[observability]
+enabled = true
