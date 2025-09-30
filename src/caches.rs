@@ -45,6 +45,7 @@ impl<T> CacheData<T> {
 
 pub struct Caches {
     routes_raw: RefCell<CacheData<Rc<Vec<u8>>>>,
+    stops_raw: RefCell<CacheData<Rc<Vec<u8>>>>,
     types: RefCell<CacheData<Rc<Vec<String>>>>,
 }
 impl Caches {
@@ -54,8 +55,13 @@ impl Caches {
 
     pub fn new() -> Self {
         let routes_raw = RefCell::new(CacheData::new(10));
+        let stops_raw = RefCell::new(CacheData::new(10));
         let types = RefCell::new(CacheData::new(3));
-        Caches { routes_raw, types }
+        Caches {
+            routes_raw,
+            stops_raw,
+            types,
+        }
     }
 
     pub fn set_routes(&self, data: Rc<Vec<u8>>) {
@@ -64,6 +70,14 @@ impl Caches {
 
     pub fn get_routes(&self) -> Option<Rc<Vec<u8>>> {
         self.routes_raw.borrow_mut().get().cloned()
+    }
+
+    pub fn set_stops(&self, data: Rc<Vec<u8>>) {
+        self.stops_raw.borrow_mut().set(data);
+    }
+
+    pub fn get_stops(&self) -> Option<Rc<Vec<u8>>> {
+        self.stops_raw.borrow_mut().get().cloned()
     }
 
     pub fn set_types(&self, data: Rc<Vec<String>>) {

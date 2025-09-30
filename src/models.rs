@@ -1,5 +1,6 @@
 use serde::{self, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub struct RouteData {
     pub number: String,
@@ -20,4 +21,10 @@ pub struct RouteGroup {
     #[serde(rename = "type")]
     pub route_type: String,
     pub directions: HashMap<String, Vec<String>>,
+}
+
+pub struct StopData {
+    pub id: String,
+    pub siri_id: String,
+    pub name: Rc<String>,
 }

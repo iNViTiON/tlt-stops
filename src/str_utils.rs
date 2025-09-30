@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use memchr::memchr_iter;
 use worker::Result;
@@ -21,7 +22,7 @@ pub fn col_at_memchr_bytes(line: &[u8], target: usize) -> Option<&[u8]> {
 }
 
 #[derive(Default)]
-pub struct LastData {
+pub struct LastRouteData {
     pub last_type: Option<String>,
     pub last_number: Option<String>,
 }
@@ -41,7 +42,10 @@ fn split_stops_field(stops_raw: &[u8]) -> worker::Result<Vec<String>> {
     Ok(stops)
 }
 
-pub fn extract_route_data_from_line(line: &[u8], last_data: &mut LastData) -> Option<RouteData> {
+pub fn extract_route_data_from_line(
+    line: &[u8],
+    last_data: &mut LastRouteData,
+) -> Option<RouteData> {
     let mut start = 0usize;
 
     let mut raw_num = None;
@@ -105,7 +109,7 @@ pub async fn extract_route_data_from_buffer_fold(
     (mut buf, route_map, last_data, last_processed, first_line_skipped): (
         Vec<u8>,
         HashMap<String, HashMap<String, RouteGroup>>,
-        LastData,
+        LastRouteData,
         usize,
         bool,
     ),
@@ -113,7 +117,7 @@ pub async fn extract_route_data_from_buffer_fold(
 ) -> Result<(
     Vec<u8>,
     HashMap<String, HashMap<String, RouteGroup>>,
-    LastData,
+    LastRouteData,
     usize,
     bool,
 )> {
@@ -139,12 +143,12 @@ pub async fn extract_route_data_from_buffer_fold(
 pub async fn extract_route_data_from_buffer(
     buf: &[u8],
     mut route_map: HashMap<String, HashMap<String, RouteGroup>>,
-    mut last_data: LastData,
+    mut last_data: LastRouteData,
     mut last_processed: usize,
     mut first_line_skipped: bool,
 ) -> Result<(
     HashMap<String, HashMap<String, RouteGroup>>,
-    LastData,
+    LastRouteData,
     usize,
     bool,
 )> {
@@ -228,4 +232,127 @@ pub async fn extract_type_from_buffer(
     }
 
     Ok((type_set, last_processed, first_line_skipped))
+}
+
+pub fn extract_stop_data_from_line(
+    line: &[u8],
+    last_name: &Option<Rc<String>>,
+) -> Option<Rc<StopData>> {
+    let mut start = 0usize;
+
+    let mut id = None;
+    let mut siri_id = None;
+    let mut name = None;
+
+    for (col, i) in memchr_iter(b';', line)
+        .chain(std::iter::once(line.len()))
+        .enumerate()
+    {
+        match col {
+            0 => {
+                id = Some(str::from_utf8(&line[start..i]).ok()?);
+            }
+            1 => {
+                siri_id = Some(str::from_utf8(&line[start..i]).ok()?);
+            }
+            5 => {
+                name = Some(str::from_utf8(&line[start..i]).ok()?);
+                break; // early exit after the last needed column
+            }
+            _ => {}
+        }
+
+        start = i.saturating_add(1);
+    }
+
+    let name = name
+        .map(str::trim)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .map(Rc::new)
+        .or_else(|| last_name.as_ref().map(|name| Rc::clone(&name)));
+    let siri_id = siri_id
+        .map(str::trim)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
+    let id = id
+        .map(str::trim)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty());
+
+    Some(StopData {
+        id: id?.to_string(),
+        siri_id: siri_id?.to_string(),
+        name: name?,
+    })
+    .map(Rc::new)
+}
+
+pub async fn extract_stop_data_from_buffer_fold(
+    (mut buf, stop_map, last_name, last_processed, first_line_skipped): (
+        Vec<u8>,
+        HashMap<String, Rc<StopData>>,
+        Option<Rc<String>>,
+        usize,
+        bool,
+    ),
+    chunk: Vec<u8>,
+) -> Result<(
+    Vec<u8>,
+    HashMap<String, Rc<StopData>>,
+    Option<Rc<String>>,
+    usize,
+    bool,
+)> {
+    buf.extend_from_slice(&chunk);
+    let (route_map, last_name, last_processed, first_line_skipped) = extract_stop_data_from_buffer(
+        &buf,
+        stop_map,
+        last_name,
+        last_processed,
+        first_line_skipped,
+    )
+    .await?;
+    Ok((
+        buf,
+        route_map,
+        last_name,
+        last_processed,
+        first_line_skipped,
+    ))
+}
+
+pub async fn extract_stop_data_from_buffer(
+    buf: &[u8],
+    mut stop_map: HashMap<String, Rc<StopData>>,
+    mut last_name: Option<Rc<String>>,
+    mut last_processed: usize,
+    mut first_line_skipped: bool,
+) -> Result<(
+    HashMap<String, Rc<StopData>>,
+    Option<Rc<String>>,
+    usize,
+    bool,
+)> {
+    let search_start = last_processed;
+
+    for newline_pos in
+        memchr::memchr_iter(b'\n', &buf[search_start..]).map(|pos| pos + search_start)
+    {
+        if !first_line_skipped {
+            first_line_skipped = true;
+            last_processed = newline_pos + 1;
+            continue;
+        }
+        let line = &buf[last_processed..newline_pos];
+
+        if let Some(stop_data) = extract_stop_data_from_line(line, &last_name) {
+            last_name = Some(Rc::clone(&stop_data.name));
+            stop_map.insert(stop_data.id.clone(), Rc::clone(&stop_data));
+            stop_map.insert(stop_data.siri_id.clone(), stop_data);
+        }
+        last_processed = newline_pos + 1;
+    }
+
+    Ok((stop_map, last_name, last_processed, first_line_skipped))
 }

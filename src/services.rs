@@ -49,6 +49,21 @@ impl TransportService {
         res.stream()
     }
 
+    async fn get_stops_stream() -> worker::Result<ByteStream> {
+        let uri = "https://transport.tallinn.ee/data/stops.txt";
+        let req_init = worker::RequestInit {
+            method: worker::Method::Get,
+            cf: worker::CfProperties {
+                cache_ttl: Some(3600),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let req = worker::Request::new_with_init(uri, &req_init)?;
+        let mut res = worker::Fetch::Request(req).send().await?;
+        res.stream()
+    }
+
     pub async fn get_types(&self) -> Result<HashSet<String>, ParsingUpstreamError> {
         let cache = Caches::get_cache();
         let from_cache = cache.get_routes();
@@ -96,7 +111,7 @@ impl TransportService {
                 let (route_map, _, _, _) = extract_route_data_from_buffer(
                     &cache[..],
                     HashMap::new(),
-                    LastData::default(),
+                    LastRouteData::default(),
                     0usize,
                     false,
                 )
@@ -110,7 +125,7 @@ impl TransportService {
                         (
                             Vec::with_capacity(128 * 1024),
                             HashMap::<String, HashMap<String, RouteGroup>>::new(),
-                            LastData::default(),
+                            LastRouteData::default(),
                             0usize,
                             false,
                         ),
@@ -127,5 +142,52 @@ impl TransportService {
         }
 
         Ok(route_map)
+    }
+
+    pub async fn get_stop_map(
+        &self,
+    ) -> Result<HashMap<String, Rc<StopData>>, ParsingUpstreamError> {
+        let cache = Caches::get_cache();
+        let from_cache = cache.get_stops();
+
+        let (buf, stop_map) = match from_cache {
+            Some(cache) => {
+                let (stop_map, _, _, _) =
+                    extract_stop_data_from_buffer(&cache[..], HashMap::new(), None, 0usize, false)
+                        .await?;
+                (None, stop_map)
+            }
+            None => {
+                let reader = Self::get_stops_stream().await?;
+                let (mut buf, stop_map, _, _, _) = reader
+                    .try_fold(
+                        (
+                            Vec::with_capacity(90 * 1024),
+                            HashMap::<String, Rc<StopData>>::new(),
+                            None,
+                            0usize,
+                            false,
+                        ),
+                        extract_stop_data_from_buffer_fold,
+                    )
+                    .await?;
+                buf.shrink_to_fit();
+                (Some(buf), stop_map)
+            }
+        };
+
+        if let Some(buf) = buf {
+            cache.set_stops(Rc::new(buf));
+        }
+
+        Ok(stop_map)
+    }
+
+    #[inline(always)]
+    pub async fn get_stop_name_by_id(&self, stop_id: &str) -> Option<Rc<String>> {
+        let stop_map = self.get_stop_map().await.ok()?;
+        stop_map
+            .get(stop_id)
+            .map(|stop_data| Rc::clone(&stop_data.name))
     }
 }
