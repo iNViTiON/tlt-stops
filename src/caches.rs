@@ -1,7 +1,10 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use worker::send::SendWrapper;
+
+use crate::models::*;
 
 pub static CACHE: OnceLock<SendWrapper<Caches>> = OnceLock::new();
 
@@ -45,6 +48,7 @@ impl<T> CacheData<T> {
 
 pub struct Caches {
     routes_raw: RefCell<CacheData<Rc<Vec<u8>>>>,
+    stop_map: RefCell<CacheData<Rc<HashMap<String, Rc<StopData>>>>>,
     stops_raw: RefCell<CacheData<Rc<Vec<u8>>>>,
     types: RefCell<CacheData<Rc<Vec<String>>>>,
 }
@@ -54,11 +58,13 @@ impl Caches {
     }
 
     pub fn new() -> Self {
-        let routes_raw = RefCell::new(CacheData::new(10));
-        let stops_raw = RefCell::new(CacheData::new(10));
-        let types = RefCell::new(CacheData::new(3));
+        let routes_raw = RefCell::new(CacheData::new(60 * 60 * 3));
+        let stop_map = RefCell::new(CacheData::new(60 * 60 * 3));
+        let stops_raw = RefCell::new(CacheData::new(60 * 60 * 3));
+        let types = RefCell::new(CacheData::new(60 * 60 * 24));
         Caches {
             routes_raw,
+            stop_map,
             stops_raw,
             types,
         }
@@ -70,6 +76,14 @@ impl Caches {
 
     pub fn get_routes(&self) -> Option<Rc<Vec<u8>>> {
         self.routes_raw.borrow_mut().get().cloned()
+    }
+
+    pub fn set_stop_map(&self, data: Rc<HashMap<String, Rc<StopData>>>) {
+        self.stop_map.borrow_mut().set(data);
+    }
+
+    pub fn get_stop_map(&self) -> Option<Rc<HashMap<String, Rc<StopData>>>> {
+        self.stop_map.borrow_mut().get().cloned()
     }
 
     pub fn set_stops(&self, data: Rc<Vec<u8>>) {

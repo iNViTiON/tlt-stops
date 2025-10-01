@@ -146,8 +146,14 @@ impl TransportService {
 
     pub async fn get_stop_map(
         &self,
-    ) -> Result<HashMap<String, Rc<StopData>>, ParsingUpstreamError> {
+    ) -> Result<Rc<HashMap<String, Rc<StopData>>>, ParsingUpstreamError> {
         let cache = Caches::get_cache();
+
+        let from_cache = cache.get_stop_map();
+        if let Some(stop_map) = from_cache {
+            return Ok(stop_map);
+        }
+
         let from_cache = cache.get_stops();
 
         let (buf, stop_map) = match from_cache {
@@ -179,6 +185,9 @@ impl TransportService {
         if let Some(buf) = buf {
             cache.set_stops(Rc::new(buf));
         }
+
+        let stop_map = Rc::new(stop_map);
+        cache.set_stop_map(Rc::clone(&stop_map));
 
         Ok(stop_map)
     }

@@ -5,7 +5,6 @@ mod str_utils;
 
 use crate::caches::*;
 use crate::services::*;
-use futures::future;
 use serde::Serialize;
 use std::rc::Rc;
 use worker::*;
@@ -85,22 +84,20 @@ async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<worker::Resp
 }
 
 async fn get_routes_by_type(_req: Request, ctx: RouteContext<()>) -> Result<worker::Response> {
-    let route_type = ctx.param("type");
-    if let Some(route_type) = route_type
-        && !route_type.is_empty()
-    {
-        let service = TransportService::get_service();
-        let route_map = service.get_route_map().await?;
-        let routes = route_map.get(route_type);
-        if let Some(routes) = routes {
+    let route_type = match ctx.param("type").filter(|s| !s.is_empty()) {
+        Some(route_type) => route_type,
+        _ => return Response::error("missing type query param", 400),
+    };
+    let service = TransportService::get_service();
+    let route_map = service.get_route_map().await?;
+    let routes = route_map.get(route_type);
+    match routes {
+        Some(routes) => {
             let mut routes = routes.keys().collect::<Vec<&String>>();
             routes.sort_unstable();
             Response::from_json(&routes)
-        } else {
-            Response::error("type not found", 404)
         }
-    } else {
-        Response::error("missing type query param", 400)
+        None => Response::error("type not found", 404),
     }
 }
 
@@ -108,76 +105,79 @@ async fn get_directions_by_route_type_number(
     _req: Request,
     ctx: RouteContext<()>,
 ) -> Result<worker::Response> {
-    let route_type = ctx.param("type");
-    let route_number = ctx.param("number");
+    let (route_type, route_number) = match (
+        ctx.param("type").filter(|s| !s.is_empty()),
+        ctx.param("number").filter(|s| !s.is_empty()),
+    ) {
+        (Some(route_type), Some(route_number)) => (route_type, route_number),
+        _ => return Response::error("missing type/number query param", 400),
+    };
 
-    if let Some(route_type) = route_type
-        && !route_type.is_empty()
-        && let Some(route_number) = route_number
-        && !route_number.is_empty()
-    {
-        let service = TransportService::get_service();
-        let route_map = service.get_route_map().await?;
-        let routes = route_map.get(route_type);
-        if let Some(routes) = routes {
-            let route = routes.get(route_number);
-            if let Some(route) = route {
-                let mut directions = route.directions.keys().collect::<Vec<&String>>();
-                directions.sort_unstable();
-                Response::from_json(&directions)
-            } else {
-                Response::error("route number not found", 404)
-            }
-        } else {
-            Response::error("type not found", 404)
-        }
-    } else {
-        Response::error("missing type/number query param", 400)
-    }
+    let service = TransportService::get_service();
+    let route_map = service.get_route_map().await?;
+
+    let routes = match route_map.get(route_type) {
+        Some(routes) => routes,
+        None => return Response::error("type not found", 404),
+    };
+
+    let route = match routes.get(route_number) {
+        Some(route) => route,
+        None => return Response::error("route number not found", 404),
+    };
+
+    let mut directions: Vec<&str> = route.directions.keys().map(|s| s.as_str()).collect();
+    directions.sort_unstable();
+
+    Response::from_json(&directions)
 }
 
 async fn get_stops_by_route_type_number_direction(
     _req: Request,
     ctx: RouteContext<()>,
 ) -> Result<worker::Response> {
-    let route_type = ctx.param("type");
-    let route_number = ctx.param("number");
-    let direction = ctx.param("direction");
-
-    if let Some(route_type) = route_type
-        && !route_type.is_empty()
-        && let Some(route_number) = route_number
-        && !route_number.is_empty()
-        && let Some(direction) = direction
-        && !direction.is_empty()
-    {
-        let service = TransportService::get_service();
-        let route_map = service.get_route_map().await?;
-        let routes = route_map.get(route_type);
-        if let Some(routes) = routes {
-            let route = routes.get(route_number);
-            if let Some(route) = route {
-                let direction = urlencoding::decode(direction).expect("can't decode direction");
-                let stops = route.directions.get(&*direction);
-                if let Some(stops) = stops {
-                    let stop_names =
-                        future::join_all(stops.iter().map(|id| service.get_stop_name_by_id(id)))
-                            .await
-                            .into_iter()
-                            .map(|name| name.expect("cannot get stop name"));
-                    let stops: Vec<(&String, Rc<String>)> =
-                        stops.into_iter().zip(stop_names).collect();
-                    Response::from_json(&stops)
-                } else {
-                    Response::error("direction not found", 404)
-                }
-            } else {
-                Response::error("route number not found", 404)
-            }
-        } else {
-            Response::error("type not found", 404)
+    let (route_type, route_number, direction_raw) = match (
+        ctx.param("type").filter(|s| !s.is_empty()),
+        ctx.param("number").filter(|s| !s.is_empty()),
+        ctx.param("direction").filter(|s| !s.is_empty()),
+    ) {
+        (Some(route_type), Some(route_number), Some(direction_raw)) => {
+            (route_type, route_number, direction_raw)
         }
-    } else {
-        Response::error("missing type/number/direction query param", 400)
+        _ => return Response::error("missing type/number/direction query param", 400),
+    };
+
+    let service = TransportService::get_service();
+    let route_map = service.get_route_map().await?;
+
+    let routes = match route_map.get(route_type) {
+        Some(routes) => routes,
+        None => return Response::error("type not found", 404),
+    };
+
+    let route = match routes.get(route_number) {
+        Some(route) => route,
+        None => return Response::error("route number not found", 404),
+    };
+
+    let direction = match urlencoding::decode(direction_raw) {
+        Ok(direction) if !direction.is_empty() => direction.to_string(),
+        _ => return Response::error("invalid direction", 400),
+    };
+
+    let stops = match route.directions.get(&direction) {
+        Some(stops) => stops,
+        None => return Response::error("direction not found", 404),
+    };
+
+    let mut stops_data = Vec::with_capacity(stops.len());
+    for stop_id in stops {
+        let stop_name = service
+            .get_stop_name_by_id(stop_id)
+            .await
+            .unwrap_or_else(|| Rc::new("Can't resolve stop name".to_string()));
+        stops_data.push((stop_id, stop_name));
     }
+
+    Response::from_json(&stops_data)
 }

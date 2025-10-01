@@ -270,22 +270,21 @@ pub fn extract_stop_data_from_line(
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .map(Rc::new)
-        .or_else(|| last_name.as_ref().map(|name| Rc::clone(&name)));
+        .or_else(|| last_name.as_ref().map(|name| Rc::clone(&name)))?;
     let siri_id = siri_id
         .map(str::trim)
         .map(str::to_string)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())?;
     let id = id
         .map(str::trim)
         .map(str::to_string)
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())?;
 
-    Some(StopData {
-        id: id?.to_string(),
-        siri_id: siri_id?.to_string(),
-        name: name?,
-    })
-    .map(Rc::new)
+    Some(Rc::new(StopData {
+        id: id,
+        siri_id: siri_id,
+        name: name,
+    }))
 }
 
 pub async fn extract_stop_data_from_buffer_fold(
@@ -305,7 +304,7 @@ pub async fn extract_stop_data_from_buffer_fold(
     bool,
 )> {
     buf.extend_from_slice(&chunk);
-    let (route_map, last_name, last_processed, first_line_skipped) = extract_stop_data_from_buffer(
+    let (stop_map, last_name, last_processed, first_line_skipped) = extract_stop_data_from_buffer(
         &buf,
         stop_map,
         last_name,
@@ -313,13 +312,7 @@ pub async fn extract_stop_data_from_buffer_fold(
         first_line_skipped,
     )
     .await?;
-    Ok((
-        buf,
-        route_map,
-        last_name,
-        last_processed,
-        first_line_skipped,
-    ))
+    Ok((buf, stop_map, last_name, last_processed, first_line_skipped))
 }
 
 pub async fn extract_stop_data_from_buffer(
