@@ -9,6 +9,15 @@ use serde::Serialize;
 use std::rc::Rc;
 use worker::*;
 
+macro_rules! get_require_param {
+    ($ctx:expr, $name:literal) => {{
+        match $ctx.param($name) {
+            Some(s) if !s.is_empty() => s,
+            _ => return Response::error(concat!("missing ", $name, " query param"), 400),
+        }
+    }};
+}
+
 pub enum HttpResponseError {
     Worker(worker::Error),
     Upstream(ParsingUpstreamError),
@@ -54,7 +63,7 @@ struct HealthStatus {
     version: &'static str,
 }
 
-fn health_check(_req: Request, _ctx: RouteContext<()>) -> Result<worker::Response> {
+fn health_check(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     Response::from_json(&HealthStatus {
         status: "healthy",
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -62,7 +71,7 @@ fn health_check(_req: Request, _ctx: RouteContext<()>) -> Result<worker::Respons
     })
 }
 
-async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<worker::Response> {
+async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let cache = Caches::get_cache();
     let from_cache = cache.get_types();
     let types = match from_cache {
@@ -83,11 +92,8 @@ async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<worker::Resp
     Response::from_json(&types)
 }
 
-async fn get_routes_by_type(_req: Request, ctx: RouteContext<()>) -> Result<worker::Response> {
-    let route_type = match ctx.param("type").filter(|s| !s.is_empty()) {
-        Some(route_type) => route_type,
-        _ => return Response::error("missing type query param", 400),
-    };
+async fn get_routes_by_type(_req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let route_type = get_require_param!(ctx, "type");
     let service = TransportService::get_service();
     let route_map = service.get_route_map().await?;
     let routes = route_map.get(route_type);
@@ -104,14 +110,9 @@ async fn get_routes_by_type(_req: Request, ctx: RouteContext<()>) -> Result<work
 async fn get_directions_by_route_type_number(
     _req: Request,
     ctx: RouteContext<()>,
-) -> Result<worker::Response> {
-    let (route_type, route_number) = match (
-        ctx.param("type").filter(|s| !s.is_empty()),
-        ctx.param("number").filter(|s| !s.is_empty()),
-    ) {
-        (Some(route_type), Some(route_number)) => (route_type, route_number),
-        _ => return Response::error("missing type/number query param", 400),
-    };
+) -> Result<Response> {
+    let route_type = get_require_param!(ctx, "type");
+    let route_number = get_require_param!(ctx, "number");
 
     let service = TransportService::get_service();
     let route_map = service.get_route_map().await?;
@@ -135,17 +136,10 @@ async fn get_directions_by_route_type_number(
 async fn get_stops_by_route_type_number_direction(
     _req: Request,
     ctx: RouteContext<()>,
-) -> Result<worker::Response> {
-    let (route_type, route_number, direction_raw) = match (
-        ctx.param("type").filter(|s| !s.is_empty()),
-        ctx.param("number").filter(|s| !s.is_empty()),
-        ctx.param("direction").filter(|s| !s.is_empty()),
-    ) {
-        (Some(route_type), Some(route_number), Some(direction_raw)) => {
-            (route_type, route_number, direction_raw)
-        }
-        _ => return Response::error("missing type/number/direction query param", 400),
-    };
+) -> Result<Response> {
+    let route_type = get_require_param!(ctx, "type");
+    let route_number = get_require_param!(ctx, "number");
+    let direction_raw = get_require_param!(ctx, "direction");
 
     let service = TransportService::get_service();
     let route_map = service.get_route_map().await?;
