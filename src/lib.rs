@@ -73,7 +73,7 @@ fn health_check(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 
 async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
     let cache = Caches::get_cache();
-    let from_cache = cache.get_types();
+    let from_cache = cache.types.get();
     let types = match from_cache {
         Some(types) => types,
         None => {
@@ -85,7 +85,7 @@ async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
                 .collect::<Vec<String>>();
             types.sort_unstable();
             let types = Rc::new(types);
-            cache.set_types(types.clone());
+            cache.types.set(types.clone());
             types
         }
     };

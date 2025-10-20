@@ -66,7 +66,7 @@ impl TransportService {
 
     pub async fn get_types(&self) -> Result<HashSet<String>, ParsingUpstreamError> {
         let cache = Caches::get_cache();
-        let from_cache = cache.get_routes();
+        let from_cache = cache.routes_raw.get();
 
         let (buf, type_set) = match from_cache {
             Some(cache) => {
@@ -94,7 +94,7 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.set_routes(Rc::new(buf));
+            cache.routes_raw.set(Rc::new(buf));
         }
 
         Ok(type_set)
@@ -104,7 +104,7 @@ impl TransportService {
         &self,
     ) -> Result<HashMap<String, HashMap<String, RouteGroup>>, ParsingUpstreamError> {
         let cache = Caches::get_cache();
-        let from_cache = cache.get_routes();
+        let from_cache = cache.routes_raw.get();
 
         let (buf, route_map) = match from_cache {
             Some(cache) => {
@@ -138,7 +138,7 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.set_routes(Rc::new(buf));
+            cache.routes_raw.set(Rc::new(buf));
         }
 
         Ok(route_map)
@@ -149,12 +149,12 @@ impl TransportService {
     ) -> Result<Rc<HashMap<String, Rc<StopData>>>, ParsingUpstreamError> {
         let cache = Caches::get_cache();
 
-        let from_cache = cache.get_stop_map();
+        let from_cache = cache.stop_map.get();
         if let Some(stop_map) = from_cache {
             return Ok(stop_map);
         }
 
-        let from_cache = cache.get_stops();
+        let from_cache = cache.stops_raw.get();
 
         let (buf, stop_map) = match from_cache {
             Some(cache) => {
@@ -183,11 +183,11 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.set_stops(Rc::new(buf));
+            cache.stops_raw.set(Rc::new(buf));
         }
 
         let stop_map = Rc::new(stop_map);
-        cache.set_stop_map(Rc::clone(&stop_map));
+        cache.stop_map.set(Rc::clone(&stop_map));
 
         Ok(stop_map)
     }
