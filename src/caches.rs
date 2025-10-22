@@ -52,6 +52,43 @@ impl<T> CacheData<T> {
     }
 }
 
+struct CacheDataWithKeys<K, T> {
+    record: RefCell<HashMap<K, CacheRecord<T>>>,
+    ttl_secs: u32,
+}
+impl<K, T> CacheDataWithKeys<K, T>
+where
+    K: std::hash::Hash + Eq + Clone,
+{
+    pub fn new(ttl_secs: u32) -> Self {
+        CacheDataWithKeys::<K, T> {
+            record: RefCell::new(HashMap::new()),
+            ttl_secs,
+        }
+    }
+
+    pub fn set(&self, key: K, data: Rc<T>) {
+        let expires_at = now_secs().saturating_add(self.ttl_secs);
+        self.record
+            .borrow_mut()
+            .insert(key, CacheRecord { data, expires_at });
+    }
+
+    fn purge_expired(&self) {
+        let now = now_secs();
+        self.record
+            .borrow_mut()
+            .retain(|_, record| record.expires_at > now);
+    }
+    pub fn get(&self, key: &K) -> Option<Rc<T>> {
+        self.purge_expired();
+        self.record
+            .borrow()
+            .get(key)
+            .map(|record| Rc::clone(&record.data))
+    }
+}
+
 pub struct Caches {
     pub routes_raw: CacheData<Vec<u8>>,
     pub stop_map: CacheData<HashMap<String, Rc<StopData>>>,
