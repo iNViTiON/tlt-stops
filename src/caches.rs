@@ -91,10 +91,10 @@ where
 
 pub struct Caches {
     pub routes_raw: CacheData<Vec<u8>>,
+    pub stop_arrival: CacheDataWithKeys<String, StopArrivals>,
     pub stop_map: CacheData<HashMap<String, Rc<StopData>>>,
     pub stops_raw: CacheData<Vec<u8>>,
     pub types: CacheData<Vec<String>>,
-    // arrivals: RefCell<HashMap
 }
 impl Caches {
     pub fn get_cache() -> &'static SendWrapper<Caches> {
@@ -103,11 +103,13 @@ impl Caches {
 
     pub fn new() -> Self {
         let routes_raw = CacheData::new(60 * 60 * 3);
+        let stop_arrival = CacheDataWithKeys::new(10);
         let stop_map = CacheData::new(60 * 60 * 3);
         let stops_raw = CacheData::new(60 * 60 * 3);
         let types = CacheData::new(60 * 60 * 24);
         Self {
             routes_raw,
+            stop_arrival,
             stop_map,
             stops_raw,
             types,
