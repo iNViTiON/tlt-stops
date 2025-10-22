@@ -1,2 +1,8 @@
+[build]
+target = ["wasm32-unknown-unknown"]
+
+[check]
+target = ["wasm32-unknown-unknown"]
+
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]
