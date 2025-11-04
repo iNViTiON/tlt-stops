@@ -28,7 +28,7 @@ use worker::*;
         get_stops_by_route_type_number_direction,
         get_stop_arrivals,
     ),
-    components(schemas(HealthStatus, RouteGroup, StopResponse))
+    components(schemas(HealthStatus, StopResponse, PostArrivalsResponse, StopArrivals, StopArrival, Arrival))
 )]
 struct ApiDoc;
 
@@ -313,7 +313,7 @@ async fn get_stops_by_route_type_number_direction(
     get,
     path = "/api/arrivals",
     params(
-        ("stops[]" = [String], Query, description = "Array of stop IDs (max 5)", example = "1001,1002,1003"),
+        ("stops" = String, Query, description = "Comma-separated list of stop IDs (max 5)", example = "1001,1002,1003"),
     ),
     responses(
         (status = 200, description = "Arrival times for requested stops", body = PostArrivalsResponse),
