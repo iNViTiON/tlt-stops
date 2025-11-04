@@ -52,7 +52,7 @@ impl<T> CacheData<T> {
     }
 }
 
-struct CacheDataWithKeys<K, T> {
+pub struct CacheDataWithKeys<K, T> {
     record: RefCell<HashMap<K, CacheRecord<T>>>,
     ttl_secs: u32,
 }
@@ -74,14 +74,18 @@ where
             .insert(key, CacheRecord { data, expires_at });
     }
 
-    fn purge_expired(&self) {
-        let now = now_secs();
-        self.record
-            .borrow_mut()
-            .retain(|_, record| record.expires_at > now);
+    fn purge_expired_with_key(&self, key: &K) {
+        let expired = self
+            .record
+            .borrow()
+            .get(key)
+            .is_some_and(|record| now_secs() > record.expires_at);
+        if expired {
+            self.record.borrow_mut().remove(key);
+        }
     }
     pub fn get(&self, key: &K) -> Option<Rc<T>> {
-        self.purge_expired();
+        self.purge_expired_with_key(key);
         self.record
             .borrow()
             .get(key)

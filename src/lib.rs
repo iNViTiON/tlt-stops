@@ -6,7 +6,9 @@ mod str_utils;
 use crate::caches::*;
 use crate::models::*;
 use crate::services::*;
+use crate::str_utils::splits_commas;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::rc::Rc;
 use utoipa::OpenApi;
 use worker::*;
@@ -23,7 +25,8 @@ use worker::*;
         get_types,
         get_routes_by_type,
         get_directions_by_route_type_number,
-        get_stops_by_route_type_number_direction
+        get_stops_by_route_type_number_direction,
+        get_stop_arrivals,
     ),
     components(schemas(HealthStatus, RouteGroup, StopResponse))
 )]
@@ -53,8 +56,24 @@ impl From<ParsingUpstreamError> for HttpResponseError {
     }
 }
 impl From<ParsingUpstreamError> for worker::Error {
-    fn from(_: ParsingUpstreamError) -> Self {
-        worker::Error::BadEncoding
+    fn from(error: ParsingUpstreamError) -> Self {
+        match error {
+            ParsingUpstreamError::Http(e) => worker::Error::Json((e.to_string(), 502)),
+            ParsingUpstreamError::Utf8 => {
+                worker::Error::RustError("UTF-8 parsing error".to_string())
+            }
+            ParsingUpstreamError::Error(msg) => worker::Error::Json((msg, 500)),
+        }
+    }
+}
+
+impl From<RequestError> for worker::Error {
+    fn from(error: RequestError) -> Self {
+        match error {
+            RequestError::MissingParameter(msg) | RequestError::InvalidParameter(msg) => {
+                worker::Error::Json((msg, 400))
+            }
+        }
     }
 }
 
@@ -73,6 +92,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             "/api/types/:type/routes/:number/directions/:direction/stops",
             get_stops_by_route_type_number_direction,
         )
+        .get_async("/api/arrivals", get_stop_arrivals)
         .run(req, env)
         .await
 }
@@ -277,11 +297,108 @@ async fn get_stops_by_route_type_number_direction(
     let mut stops_data = Vec::with_capacity(stops.len());
     for stop_id in stops {
         let stop_name = service
-            .get_stop_name_by_id(stop_id)
+            .get_stop_name_by_id_async(stop_id)
             .await
             .unwrap_or_else(|| Rc::new("Can't resolve stop name".to_string()));
         stops_data.push((stop_id, stop_name));
     }
 
     Response::from_json(&stops_data)
+}
+
+/// Get arrival times for specific stops
+///
+/// Returns real-time arrival information for the requested stops
+#[utoipa::path(
+    get,
+    path = "/api/arrivals",
+    params(
+        ("stops[]" = [String], Query, description = "Array of stop IDs (max 5)", example = "1001,1002,1003"),
+    ),
+    responses(
+        (status = 200, description = "Arrival times for requested stops", body = PostArrivalsResponse),
+        (status = 400, description = "Invalid request - no stops provided or too many stops (max 5)"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "Arrivals"
+)]
+async fn get_stop_arrivals(req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    let stops_param = req.url()?;
+    let stops_param = stops_param
+        .query_pairs()
+        .find_map(|(k, v)| {
+            if k == "stops" && !v.is_empty() {
+                return Some(v);
+            }
+            None
+        })
+        .ok_or(RequestError::MissingParameter(String::from(
+            "missing stops query parameter",
+        )))?;
+    let stops_request = splits_commas(stops_param.as_bytes()).map_err(|_| {
+        RequestError::InvalidParameter(String::from("invalid stops query parameter"))
+    })?;
+    {
+        let stop_count = stops_request.len();
+        if !(1..=5).contains(&stop_count) {
+            return Response::error("invalid number of stops provided (1-5)", 400);
+        }
+    }
+    let service = TransportService::get_service();
+    let stop_map = service.get_stop_map().await?;
+    let arrivals_cache = &Caches::get_cache().stop_arrival;
+    let mut stop_states: Vec<StopArrivalState> = stops_request
+        .into_iter()
+        .map(StopId)
+        .map(StopArrivalState::StopId)
+        .map(|state| match state {
+            StopArrivalState::StopId(stop_id) => stop_id.validate(&stop_map),
+            other => other,
+        })
+        .map(|state| match state {
+            StopArrivalState::Valid(valid_stop_id) => {
+                valid_stop_id.fetch_arrivals_from_cache(arrivals_cache)
+            }
+            other => other,
+        })
+        .collect();
+    let missing_caches = stop_states
+        .iter()
+        .filter_map(|state| match state {
+            StopArrivalState::Valid(stop) => Some(stop.data.siri_id.to_string()),
+            _ => None,
+        })
+        .collect::<HashSet<String>>()
+        .into_iter()
+        .fold(String::new(), |mut acc, id| {
+            if !acc.is_empty() {
+                acc.push(',');
+            }
+            acc.push_str(&id);
+            acc
+        });
+    if !missing_caches.is_empty() {
+        service.update_stops_arrival_cache(&missing_caches).await?;
+        stop_states = stop_states
+            .into_iter()
+            .map(|state| match state {
+                StopArrivalState::Valid(valid_stop_id) => {
+                    valid_stop_id.fetch_arrivals_from_cache(arrivals_cache)
+                }
+                other => other,
+            })
+            .collect();
+    }
+    let stop_arrivals = stop_states
+        .into_iter()
+        .map(|state| match state {
+            StopArrivalState::Ready(ready_stop_arrivals) => Ok(Some(ready_stop_arrivals.0)),
+            StopArrivalState::Invalid => Ok(None),
+            _ => Err(ParsingUpstreamError::Error(String::from(
+                "unexpected state when fetching arrivals from cache",
+            ))),
+        })
+        .collect::<core::result::Result<Vec<Option<Rc<StopArrivals>>>, ParsingUpstreamError>>()
+        .map(|stops| PostArrivalsResponse { stops });
+    Response::from_json(&stop_arrivals?)
 }

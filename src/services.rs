@@ -6,6 +6,8 @@ use futures::TryStreamExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
+use std::str::Utf8Error;
+use std::string::FromUtf8Error;
 use std::sync::OnceLock;
 use worker::ByteStream;
 use worker::send::SendWrapper;
@@ -15,11 +17,25 @@ pub static SERVICE: OnceLock<SendWrapper<TransportService>> = OnceLock::new();
 #[derive(Debug)]
 pub enum ParsingUpstreamError {
     Http(worker::Error),
+    Utf8,
+    Error(String),
 }
 
 impl From<worker::Error> for ParsingUpstreamError {
     fn from(err: worker::Error) -> Self {
         ParsingUpstreamError::Http(err)
+    }
+}
+
+impl From<FromUtf8Error> for ParsingUpstreamError {
+    fn from(_err: FromUtf8Error) -> Self {
+        ParsingUpstreamError::Utf8
+    }
+}
+
+impl From<Utf8Error> for ParsingUpstreamError {
+    fn from(_err: Utf8Error) -> Self {
+        ParsingUpstreamError::Utf8
     }
 }
 
@@ -62,6 +78,49 @@ impl TransportService {
         let req = worker::Request::new_with_init(uri, &req_init)?;
         let mut res = worker::Fetch::Request(req).send().await?;
         res.stream()
+    }
+
+    async fn get_stops_arrivals(&self, stop_siri_ids: &str) -> worker::Result<String> {
+        let uri = format!(
+            "https://transport.tallinn.ee/siri-stop-departures.php?stopid={}",
+            stop_siri_ids
+        );
+        let req_init = worker::RequestInit {
+            method: worker::Method::Get,
+            cf: worker::CfProperties {
+                cache_ttl: Some(120),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let req = worker::Request::new_with_init(&uri, &req_init)?;
+        let mut res = worker::Fetch::Request(req).send().await?;
+        res.text().await
+    }
+
+    pub async fn update_stops_arrival_cache(
+        &self,
+        stop_siri_ids: &str,
+    ) -> core::result::Result<(), ParsingUpstreamError> {
+        if stop_siri_ids.is_empty() {
+            return Ok(());
+        }
+        let arrivals_raw = self.get_stops_arrivals(stop_siri_ids).await?;
+        let arrivals_bytes = arrivals_raw.as_bytes();
+        let stop_map = self.get_stop_map().await?;
+        let cache = Caches::get_cache();
+        let stop_arrival_cache = &cache.stop_arrival;
+        let stop_arrivals =
+            split_arrival_by_stops(arrivals_bytes)
+                .flat_map(|stop_arrival_raw| {
+                    self::extract_arrival_stop_data_from_line(stop_arrival_raw, &stop_map)
+                });
+        for stop_arrival in stop_arrivals {
+            let stop_arrival = stop_arrival?;
+            let stop_arrival = Rc::new(stop_arrival);
+            stop_arrival_cache.set(stop_arrival.id.clone(), stop_arrival);
+        }
+        Ok(())
     }
 
     pub async fn get_types(&self) -> Result<HashSet<String>, ParsingUpstreamError> {
@@ -193,8 +252,16 @@ impl TransportService {
     }
 
     #[inline(always)]
-    pub async fn get_stop_name_by_id(&self, stop_id: &str) -> Option<Rc<String>> {
+    pub async fn get_stop_name_by_id_async(&self, stop_id: &str) -> Option<Rc<String>> {
         let stop_map = self.get_stop_map().await.ok()?;
+        TransportService::get_stop_name_by_id(stop_id, &stop_map)
+    }
+
+    #[inline(always)]
+    pub fn get_stop_name_by_id(
+        stop_id: &str,
+        stop_map: &HashMap<String, Rc<StopData>>,
+    ) -> Option<Rc<String>> {
         stop_map
             .get(stop_id)
             .map(|stop_data| Rc::clone(&stop_data.name))

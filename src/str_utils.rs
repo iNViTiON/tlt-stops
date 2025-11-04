@@ -1,10 +1,33 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::string::FromUtf8Error;
 
-use memchr::memchr_iter;
+use chrono::offset::LocalResult;
+use chrono::{NaiveDateTime, NaiveTime, TimeZone, Utc};
+use memchr::{memchr_iter, memmem};
 use worker::Result;
 
 use crate::models::*;
+use crate::services::*;
+
+pub fn seconds_from_midnight_to_utc_iso(
+    seconds_from_midnight: u32,
+) -> core::result::Result<String, &'static str> {
+    use chrono_tz::Europe::Tallinn;
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(seconds_from_midnight, 0)
+        .ok_or("seconds_from_midnight must be in 0..=86399")?;
+
+    let today_tallinn = Utc::now().with_timezone(&Tallinn).date_naive();
+    let naive_dt = NaiveDateTime::new(today_tallinn, time);
+
+    match Tallinn.from_local_datetime(&naive_dt) {
+        LocalResult::Single(dt_tallinn) => Ok(dt_tallinn.with_timezone(&Utc).to_rfc3339()),
+        // If local time is ambiguous (fall-back), pick the earlier occurrence.
+        LocalResult::Ambiguous(earliest, _latest) => Ok(earliest.with_timezone(&Utc).to_rfc3339()),
+        // If local time doesn't exist (spring-forward gap), surface an error.
+        LocalResult::None => Err("Local time does not exist in Tallinn today (DST gap)"),
+    }
+}
 
 pub fn col_at_memchr_bytes(line: &[u8], target: usize) -> Option<&[u8]> {
     let mut start = 0usize;
@@ -21,6 +44,18 @@ pub fn col_at_memchr_bytes(line: &[u8], target: usize) -> Option<&[u8]> {
     None
 }
 
+#[inline(always)]
+pub fn splits_commas(input: &[u8]) -> core::result::Result<Vec<String>, FromUtf8Error> {
+    let count = memchr_iter(b',', input).count();
+    let mut parts = Vec::with_capacity(count + 1);
+    let mut start = 0usize;
+    for i in memchr_iter(b',', input).chain(std::iter::once(input.len())) {
+        parts.push(String::from_utf8(input[start..i].to_owned())?);
+        start = i + 1;
+    }
+    Ok(parts)
+}
+
 #[derive(Default)]
 pub struct LastRouteData {
     pub last_type: Option<String>,
@@ -28,18 +63,180 @@ pub struct LastRouteData {
 }
 
 #[inline(always)]
-fn split_stops_field(stops_raw: &[u8]) -> worker::Result<Vec<String>> {
+fn split_stops_field(stops_raw: &[u8]) -> core::result::Result<Vec<String>, ParsingUpstreamError> {
     let count = memchr_iter(b',', stops_raw).count();
     let mut stops = Vec::with_capacity(count + 1);
     let mut start = 0usize;
     for i in memchr_iter(b',', stops_raw) {
-        stops.push(String::from_utf8(stops_raw[start..i].to_owned()).expect("invalid stops data"));
+        stops.push(String::from_utf8(stops_raw[start..i].to_owned())?);
         start = i + 1;
     }
     if start < stops_raw.len() {
-        stops.push(String::from_utf8(stops_raw[start..].to_owned()).expect("invalid stops data"));
+        stops.push(String::from_utf8(stops_raw[start..].to_owned())?);
     }
     Ok(stops)
+}
+
+pub fn split_arrival_by_stops(arrival: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut start = 0usize;
+    memmem::find_iter(arrival, b"\nstop,")
+        .chain(std::iter::once(arrival.len()))
+        .map(move |i| {
+            let part = &arrival[start..i];
+            start = i + 1;
+            part
+        })
+        .skip(1)
+}
+
+pub fn remove_trailing_newline(input: &[u8]) -> &[u8] {
+    if let Some(last_byte) = input.last()
+        && *last_byte == b'\n'
+    {
+        &input[..input.len() - 1]
+    } else {
+        input
+    }
+}
+
+pub fn extract_arrival_data(
+    arrival_line: &[u8],
+) -> core::result::Result<StopArrival, ParsingUpstreamError> {
+    let mut start = 0usize;
+
+    let mut route_number = None;
+    let mut route_type = None;
+    let mut expected_time = None;
+    let mut arrival_type = None;
+
+    for (col, i) in memchr_iter(b',', arrival_line)
+        .chain(std::iter::once(arrival_line.len()))
+        .enumerate()
+    {
+        let current = unsafe { str::from_utf8_unchecked(&arrival_line[start..i]) };
+        match col {
+            0 => {
+                route_type = Some(current);
+            }
+            1 => {
+                route_number = Some(current);
+            }
+            2 => {
+                expected_time = Some(
+                    seconds_from_midnight_to_utc_iso(
+                        current
+                            .parse::<u32>()
+                            .map_err(|_| ParsingUpstreamError::Utf8)?,
+                    )
+                    .map_err(|_| ParsingUpstreamError::Utf8)?,
+                );
+            }
+            6 => {
+                let expected_time = expected_time.ok_or(ParsingUpstreamError::Error(
+                    String::from("incorrect arrival time"),
+                ))?;
+                arrival_type = Some(if current == "Z" {
+                    Arrival::LowEntry(expected_time)
+                } else {
+                    Arrival::RegularEntry(expected_time)
+                });
+                break; // early exit after the last needed column
+            }
+            _ => {}
+        }
+        start = i.saturating_add(1);
+    }
+
+    Ok(StopArrival {
+        number: route_number
+            .ok_or(ParsingUpstreamError::Error(String::from(
+                "invalid arrival data1",
+            )))?
+            .to_string(),
+        r#type: route_type
+            .ok_or(ParsingUpstreamError::Error(String::from(
+                "invalid arrival data2",
+            )))?
+            .to_string(),
+        arrivals: arrival_type.ok_or(ParsingUpstreamError::Error(String::from(
+            "invalid arrival data3",
+        )))?,
+    })
+}
+
+pub fn extract_arrival_list_data(
+    arrival_lines: &[u8],
+) -> impl Iterator<Item = core::result::Result<StopArrival, ParsingUpstreamError>> {
+    let mut start = 0usize;
+    memchr_iter(b'\n', arrival_lines)
+        .chain(std::iter::once(arrival_lines.len()))
+        .map(move |i| {
+            let part = &arrival_lines[start..i];
+            start = i + 1;
+            part
+        })
+        .filter(|line| !line.is_empty())
+        .map(extract_arrival_data)
+}
+
+pub fn extract_stop_arrival_list_data(
+    stop_lines: &[u8],
+    stop_map: &HashMap<String, Rc<StopData>>,
+) -> core::result::Result<StopArrivals, ParsingUpstreamError> {
+    let first_new_line_pos = memchr::memchr(b'\n', stop_lines).ok_or(
+        ParsingUpstreamError::Error(String::from("invalid arrival data4")),
+    )?;
+    let stop_id = {
+        let first_line = remove_trailing_newline(&stop_lines[..=first_new_line_pos]);
+        let stop_id_comma_pos =
+            memchr::memchr_iter(b',', first_line)
+                .next()
+                .ok_or(ParsingUpstreamError::Error(String::from(
+                    "invalid arrival data5",
+                )))?;
+        &first_line[stop_id_comma_pos + 1..]
+    };
+
+    let mut arrivals = HashMap::new();
+    let arrival_lines = &stop_lines[first_new_line_pos + 1..];
+
+    for arrival in extract_arrival_list_data(arrival_lines) {
+        let arrival = arrival?;
+        arrivals
+            .entry(arrival.r#type.clone())
+            .or_insert_with(HashMap::new)
+            .entry(arrival.number.clone())
+            .or_insert_with(Vec::new)
+            .push(arrival.arrivals);
+    }
+
+    let stop_id = unsafe { str::from_utf8_unchecked(stop_id) };
+    Ok(StopArrivals {
+        id: stop_id.to_string(),
+        // r#type: unsafe { str::from_utf8_unchecked(arrival_lines) }.to_string(),
+        // name: unsafe { str::from_utf8_unchecked(arrival_lines) }.to_string(),
+        name: TransportService::get_stop_name_by_id(stop_id, stop_map)
+            .map(|name| name.to_string())
+            .ok_or(ParsingUpstreamError::Error(String::from(
+                "invalid arrival data6",
+            )))?,
+        arrivals,
+    })
+}
+
+pub fn extract_arrival_stop_data_from_line(
+    line: &[u8],
+    stop_map: &HashMap<String, Rc<StopData>>,
+) -> impl Iterator<Item = core::result::Result<StopArrivals, ParsingUpstreamError>> {
+    let mut start = 0usize;
+    memmem::find_iter(line, b"\nstosp,")
+        .chain(std::iter::once(line.len()))
+        .map(move |i| {
+            let part = &line[start..i];
+            start = i + 1;
+            part
+        })
+        .map(|s| extract_stop_arrival_list_data(s, stop_map))
 }
 
 pub fn extract_route_data_from_line(
@@ -105,6 +302,7 @@ pub fn extract_route_data_from_line(
     })
 }
 
+#[allow(clippy::type_complexity)]
 pub async fn extract_route_data_from_buffer_fold(
     (mut buf, route_map, last_data, last_processed, first_line_skipped): (
         Vec<u8>,
@@ -178,7 +376,7 @@ pub async fn extract_route_data_from_buffer(
                     directions.insert(route_data.directions, route_data.stops);
                     RouteGroup {
                         number: route_data.number,
-                        route_type: route_data.route_type,
+                        r#type: route_data.route_type,
                         directions,
                     }
                 });
@@ -270,7 +468,7 @@ pub fn extract_stop_data_from_line(
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .map(Rc::new)
-        .or_else(|| last_name.as_ref().map(|name| Rc::clone(&name)))?;
+        .or_else(|| last_name.as_ref().map(Rc::clone))?;
     let siri_id = siri_id
         .map(str::trim)
         .map(str::to_string)
@@ -280,13 +478,10 @@ pub fn extract_stop_data_from_line(
         .map(str::to_string)
         .filter(|s| !s.is_empty())?;
 
-    Some(Rc::new(StopData {
-        id: id,
-        siri_id: siri_id,
-        name: name,
-    }))
+    Some(Rc::new(StopData { id, siri_id, name }))
 }
 
+#[allow(clippy::type_complexity)]
 pub async fn extract_stop_data_from_buffer_fold(
     (mut buf, stop_map, last_name, last_processed, first_line_skipped): (
         Vec<u8>,
