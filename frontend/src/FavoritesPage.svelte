@@ -9,6 +9,7 @@
   let hiddenRoutes = $state(loadHiddenRoutes());
   let nextUpdateTimes = $state<{[stopId: string]: number}>({});
 
+  const API_BASE = '/api';
 
   function calculateNextUpdateDelay(firstArrivalMinutes: number): number {
     if (firstArrivalMinutes > 10) return 60_000;
@@ -100,8 +101,8 @@
   async function refreshData(isInitial = false) {
     if (isInitial) {
       loading = true;
-    const favorites = loadFavorites();
-    stops = await fetchArrivals(favorites);
+      const favorites = loadFavorites();
+      stops = await fetchArrivals(favorites);
       loading = false;
     } else {
       // Smart update: only fetch stops that need updating
