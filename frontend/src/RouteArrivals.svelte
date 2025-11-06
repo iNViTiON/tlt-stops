@@ -2,7 +2,7 @@
   import { currentTime } from './lib/stores';
   export let type: string;
   export let route: string;
-  export let arrivals: Array<{ time: string; isLowEntry?: boolean }>;
+  export let arrivals: Array<{ time: number; timeString?: string; isLowEntry?: boolean }>;
 
   function getIcon(type: string): string {
     switch (type) {
@@ -14,9 +14,8 @@
   }
 
   $: countdowns = arrivals.map(a => {
-    const arrivalTime = new Date(a.time).getTime();
     const now = $currentTime;
-    const diff = Math.floor((arrivalTime - now) / 1000);
+    const diff = Math.floor((a.time - now) / 1000);
     if (diff <= 0) return 'Now';
     const minutes = Math.floor(diff / 60);
     const seconds = diff % 60;

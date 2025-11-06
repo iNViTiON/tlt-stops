@@ -1,14 +1,36 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { currentTime } from './lib/stores';
-  import type { StopArrival, FavoriteStop } from './lib/types';
+  import type { StopArrival, FavoriteStop, RawStopArrival } from './lib/types';
   import StopCard from './StopCard.svelte';
 
   let stops = $state<StopArrival[]>([]);
   let loading = $state(false);
   let hiddenRoutes = $state(loadHiddenRoutes());
+  let nextUpdateTimes = $state<{[stopId: string]: number}>({});
 
-  const API_BASE = '/api';
+
+  function calculateNextUpdateDelay(firstArrivalMinutes: number): number {
+    if (firstArrivalMinutes > 10) return 60_000;
+    if (firstArrivalMinutes >= 5) return 30_000;
+    if (firstArrivalMinutes >= 3) return 15_000;
+    if (firstArrivalMinutes >= 2) return 10_000;
+    return 5_000;
+  }
+
+  function getFirstArrivalTime(stop: StopArrival, stopId: string): number {
+    const hidden = hiddenRoutes[stopId] || [];
+    let minTime: number = Number.MAX_SAFE_INTEGER;
+    for (const types of Object.values(stop.arrivals)) {
+      for (const [route, arrivals] of Object.entries(types)) {
+        if (hidden.includes(route)) continue;
+        for (const arrival of arrivals) {
+          minTime = Math.min(minTime, arrival.time);
+        }
+      }
+    }
+    return minTime;
+  }
 
   function loadFavorites(): FavoriteStop[] {
     const stored = localStorage.getItem('favoriteStops');
@@ -29,18 +51,45 @@
     }
 
     const results: StopArrival[] = [];
+    const now = Date.now();
     for (const chunk of chunks) {
       const ids = chunk.map(f => f.id);
       const response = await fetch(`${API_BASE}/arrivals?stops=${ids.join(',')}`);
       if (response.ok) {
-        const data: { stops: (StopArrival | null)[] } = await response.json();
+        const data: { stops: (RawStopArrival | null)[] } = await response.json();
         for (let i = 0; i < data.stops.length; i++) {
-          if (data.stops[i]) {
-            results.push({
-              ...data.stops[i],
+          const rawStop = data.stops[i];
+          if (rawStop && rawStop.arrivals) {
+            // Convert ISO time strings to timestamps
+            const arrivals: StopArrival['arrivals'] = {};
+            for (const [type, routes] of Object.entries(rawStop.arrivals)) {
+              arrivals[type] = {};
+              for (const [route, arrivalList] of Object.entries(routes)) {
+                arrivals[type][route] = arrivalList.map(a => ({
+                  time: new Date(a.time).getTime(),
+                  timeString: a.time,
+                  isLowEntry: a.isLowEntry
+                }));
+              }
+            }
+            
+            const stopData: StopArrival = {
               id: chunk[i].id,
-              name: chunk[i].name
-            });
+              name: chunk[i].name,
+              arrivals
+            };
+            results.push(stopData);
+            
+            // Calculate next update time based on first visible arrival
+            const firstArrival = getFirstArrivalTime(stopData, chunk[i].id);
+            if (firstArrival !== null) {
+              const minutesUntilArrival = Math.floor((firstArrival - now) / 60000);
+              const delay = calculateNextUpdateDelay(minutesUntilArrival);
+              nextUpdateTimes[chunk[i].id] = now + delay;
+            } else {
+              // No arrivals, check again in 60 seconds
+              nextUpdateTimes[chunk[i].id] = now + 60000;
+            }
           }
         }
       }
@@ -49,15 +98,31 @@
   }
 
   async function refreshData(isInitial = false) {
-    if (isInitial) loading = true;
+    if (isInitial) {
+      loading = true;
     const favorites = loadFavorites();
     stops = await fetchArrivals(favorites);
-    if (isInitial) loading = false;
+      loading = false;
+    } else {
+      // Smart update: only fetch stops that need updating
+      const favorites = loadFavorites();
+      const now = Date.now();
+      const stopsToUpdate = favorites.filter(f => !nextUpdateTimes[f.id] || nextUpdateTimes[f.id] <= now);
+      
+      if (stopsToUpdate.length > 0) {
+        const updatedStops = await fetchArrivals(stopsToUpdate);
+        
+        // Merge updated stops with existing ones
+        const stopMap = new Map(stops.map(s => [s.id, s]));
+        updatedStops.forEach(s => stopMap.set(s.id, s));
+        stops = Array.from(stopMap.values());
+      }
+    }
   }
 
   onMount(() => {
     refreshData(true);
-    const interval = setInterval(() => refreshData(false), 30000); // 30 seconds
+    const interval = setInterval(() => refreshData(false), 5000); // Check every 5 seconds
     return () => clearInterval(interval);
   });
 

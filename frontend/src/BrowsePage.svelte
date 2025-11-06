@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import StopCard from './StopCard.svelte';
-  import type { StopArrival, FavoriteStop } from './lib/types';
+  import type { StopArrival, FavoriteStop, RawStopArrival } from './lib/types';
 
   let types = $state<string[]>([]);
   let routes = $state<string[]>([]);
@@ -100,8 +100,29 @@
   async function fetchArrivalsFor(stopId: string) {
     const response = await fetch(`${API_BASE}/arrivals?stops=${stopId}`);
     if (response.ok) {
-      const data: { stops: (StopArrival | null)[] } = await response.json();
-      stopData = data.stops[0] || null;
+      const data: { stops: (RawStopArrival | null)[] } = await response.json();
+      const rawStop = data.stops[0];
+      if (rawStop && rawStop.arrivals) {
+        // Convert ISO time strings to timestamps
+        const arrivals: StopArrival['arrivals'] = {};
+        for (const [type, routes] of Object.entries(rawStop.arrivals)) {
+          arrivals[type] = {};
+          for (const [route, arrivalList] of Object.entries(routes)) {
+            arrivals[type][route] = arrivalList.map(a => ({
+              time: new Date(a.time).getTime(),
+              timeString: a.time,
+              isLowEntry: a.isLowEntry
+            }));
+          }
+        }
+        stopData = {
+          id: rawStop.id || stopId,
+          name: rawStop.name || '',
+          arrivals
+        };
+      } else {
+        stopData = null;
+      }
     }
   }
 
@@ -112,9 +133,30 @@
     try {
       const response = await fetch(`${API_BASE}/arrivals?stops=${selectedStopId}`);
       if (response.ok) {
-        const data: { stops: (StopArrival | null)[] } = await response.json();
+        const data: { stops: (RawStopArrival | null)[] } = await response.json();
         console.log('API response data:', data);
-        stopData = data.stops[0] || null;
+        const rawStop = data.stops[0];
+        if (rawStop && rawStop.arrivals) {
+          // Convert ISO time strings to timestamps
+          const arrivals: StopArrival['arrivals'] = {};
+          for (const [type, routes] of Object.entries(rawStop.arrivals)) {
+            arrivals[type] = {};
+            for (const [route, arrivalList] of Object.entries(routes)) {
+              arrivals[type][route] = arrivalList.map(a => ({
+                time: new Date(a.time).getTime(),
+                timeString: a.time,
+                isLowEntry: a.isLowEntry
+              }));
+            }
+          }
+          stopData = {
+            id: rawStop.id || selectedStopId,
+            name: rawStop.name || '',
+            arrivals
+          };
+        } else {
+          stopData = null;
+        }
         console.log('Selected stopData:', stopData);
       } else {
         console.error('Failed to fetch arrivals:', response.status, response.statusText);
@@ -260,7 +302,7 @@
       <p>Loading arrivals...</p>
     {:else if stopData}
       <div class="result">
-        <button class="favorite-btn" onclick={() => toggleFavorite(stopData)}>
+        <button class="favorite-btn" onclick={() => stopData && toggleFavorite(stopData)}>
           {isFavorite(selectedStopId) ? '★' : '☆'} {isFavorite(selectedStopId) ? 'Favorited' : 'Add to Favorites'}
         </button>
         <StopCard 

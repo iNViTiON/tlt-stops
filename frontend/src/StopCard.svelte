@@ -11,8 +11,8 @@
   let showFilters = false;
 
   function getVisibleRoutes() {
-    const allRoutes = Object.keys(stop.arrivals).flatMap(type =>
-      Object.keys(stop.arrivals[type]).map(route => `${type}-${route}`)
+    const allRoutes = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
+      Object.entries(routes).map(([route]) => `${type}-${route}`)
     );
     return allRoutes.filter(route => !hiddenRoutes.includes(route.split('-')[1]));
   }
@@ -31,8 +31,8 @@
 
   {#if showFilters}
     <div class="filters">
-      {#each Object.keys(stop.arrivals) as type}
-        {#each Object.keys(stop.arrivals[type]) as route}
+      {#each Object.entries(stop.arrivals) as [type, routes]}
+        {#each Object.entries(routes) as [route]}
           <label>
             <input
               type="checkbox"
@@ -47,13 +47,13 @@
   {/if}
 
   <div class="arrivals">
-    {#if Object.keys(stop.arrivals).length === 0}
+    {#if Object.values(stop.arrivals).length === 0}
       <p>No arrivals available at this time.</p>
     {:else}
-      {#each Object.keys(stop.arrivals) as type}
-        {#each Object.keys(stop.arrivals[type]) as route}
+      {#each Object.entries(stop.arrivals) as [type, routes]}
+        {#each Object.entries(routes) as [route, arrivals]}
           {#if !hiddenRoutes.includes(route)}
-            <RouteArrivals {type} {route} arrivals={stop.arrivals[type][route]} />
+            <RouteArrivals {type} {route} {arrivals} />
           {/if}
         {/each}
       {/each}
