@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import RouteArrivals from './RouteArrivals.svelte';
   import type { StopArrival } from './lib/types';
+  import { currentTime } from './lib/stores';
 
   export let stop: StopArrival;
   export let hiddenRoutes: string[] = [];
@@ -25,7 +25,7 @@
 
   function formatTime(timestamp: number): string {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
   }
 
   $: allArrivals = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
@@ -33,11 +33,21 @@
       arrivals.map(arrival => ({
         route,
         type,
+        timestamp: arrival.time,
         time: formatTime(arrival.time),
         isLowEntry: arrival.isLowEntry
       }))
     )
   );
+
+  $: countdowns = allArrivals.map(a => {
+    const now = $currentTime;
+    const diff = Math.floor((a.timestamp - now) / 1000);
+    if (diff <= 0) return 'Now';
+    const minutes = Math.floor(diff / 60);
+    const seconds = diff % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  });
 
   $: allTimes = [...new Set(allArrivals.map(a => a.time))].sort();
 
@@ -99,7 +109,9 @@
               {@const arrival = routeArrivals.find(a => a.time === time)}
               <span class="time-cell">
                 {#if arrival}
-                  {time}{#if arrival.isLowEntry}♿{/if}
+                  {@const index = allArrivals.indexOf(arrival)}
+                  {countdowns[index]}{#if arrival.isLowEntry}♿{/if}
+                  {time}{#if !arrival.isLowEntry} {/if}
                 {:else}
                   ———————
                 {/if}
@@ -175,6 +187,7 @@
     min-width: 4rem;
     text-align: center;
     font-family: monospace;
-    margin-right: 0rem;
+    margin-right: -0.12rem;
+    padding-right: 0.12rem;
   }
 </style>
