@@ -394,9 +394,7 @@ async fn get_stop_arrivals(req: Request, _ctx: RouteContext<()>) -> Result<Respo
         .map(|state| match state {
             StopArrivalState::Ready(ready_stop_arrivals) => Ok(Some(ready_stop_arrivals.0)),
             StopArrivalState::Invalid => Ok(None),
-            _ => Err(ParsingUpstreamError::Error(String::from(
-                "unexpected state when fetching arrivals from cache",
-            ))),
+            _ => Ok(None), // No more arrivals for today
         })
         .collect::<core::result::Result<Vec<Option<Rc<StopArrivals>>>, ParsingUpstreamError>>()
         .map(|stops| PostArrivalsResponse { stops });
