@@ -14,11 +14,22 @@ pub fn seconds_from_midnight_to_utc_iso(
     seconds_from_midnight: u32,
 ) -> core::result::Result<String, &'static str> {
     use chrono_tz::Europe::Tallinn;
+    let is_next_day = seconds_from_midnight >= 86400;
+    let seconds_from_midnight = if is_next_day {
+        seconds_from_midnight - 86400
+    } else {
+        seconds_from_midnight
+    };
     let time = NaiveTime::from_num_seconds_from_midnight_opt(seconds_from_midnight, 0)
         .ok_or("seconds_from_midnight must be in 0..=86399")?;
 
     let today_tallinn = Utc::now().with_timezone(&Tallinn).date_naive();
-    let naive_dt = NaiveDateTime::new(today_tallinn, time);
+    let mut naive_dt = NaiveDateTime::new(today_tallinn, time);
+    if is_next_day {
+        naive_dt = naive_dt
+            .checked_add_days(chrono::Days::new(1))
+            .ok_or("date overflow")?;
+    }
 
     match Tallinn.from_local_datetime(&naive_dt) {
         LocalResult::Single(dt_tallinn) => Ok(dt_tallinn.with_timezone(&Utc).to_rfc3339()),
