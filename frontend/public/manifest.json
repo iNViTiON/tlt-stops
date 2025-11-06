@@ -1,0 +1,21 @@
+{
+  "name": "TLT Stop tracker",
+  "short_name": "TLT Stop tracker",
+  "description": "Real-time public transport stop tracking for TLT",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/tlt-stops.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/tlt-stops.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
