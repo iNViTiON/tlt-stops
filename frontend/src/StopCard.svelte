@@ -22,6 +22,34 @@
   function toggleRoute(route: string) {
     dispatch('toggleHidden', route);
   }
+
+  function formatTime(timestamp: number): string {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  $: allArrivals = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
+    Object.entries(routes).flatMap(([route, arrivals]) =>
+      arrivals.map(arrival => ({
+        route,
+        type,
+        time: formatTime(arrival.time),
+        isLowEntry: arrival.isLowEntry
+      }))
+    )
+  );
+
+  $: allTimes = [...new Set(allArrivals.map(a => a.time))].sort();
+
+  $: visibleRoutes = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
+    Object.entries(routes).filter(([route]) => !hiddenRoutes.includes(route)).map(([route]) => route)
+  ).sort((a, b) => {
+    if (browsing && selectedRoute) {
+      if (a === selectedRoute) return -1;
+      if (b === selectedRoute) return 1;
+    }
+    return 0;
+  });
 </script>
 
 <div class="stop-card">
@@ -58,23 +86,28 @@
   {/if}
 
   <div class="arrivals">
-    {#if Object.values(stop.arrivals).length === 0}
+    {#if allTimes.length === 0}
       <p>No arrivals available at this time.</p>
     {:else}
-      {#each Object.entries(stop.arrivals) as [type, routes]}
-        {@const sortedRoutes = (browsing && selectedRoute)
-          ? Object.entries(routes).sort(([a], [b]) => {
-              if (a === selectedRoute) return -1;
-              if (b === selectedRoute) return 1;
-              return 0;
-            })
-          : Object.entries(routes)}
-        {#each sortedRoutes as [route, arrivals]}
-          {#if !hiddenRoutes.includes(route)}
-            <RouteArrivals {type} {route} {arrivals} />
-          {/if}
+      <div class="times-grid">
+        {#each visibleRoutes as route}
+          {@const routeArrivals = allArrivals.filter(a => a.route === route)}
+          {@const routeType = routeArrivals[0]?.type || ''}
+          <div class="route-row">
+            <span class="route-number">{route}</span>
+            {#each allTimes as time}
+              {@const arrival = routeArrivals.find(a => a.time === time)}
+              <span class="time-cell">
+                {#if arrival}
+                  {time}{#if arrival.isLowEntry}♿{/if}
+                {:else}
+                  ———————
+                {/if}
+              </span>
+            {/each}
+          </div>
         {/each}
-      {/each}
+      </div>
     {/if}
   </div>
 </div>
@@ -115,5 +148,33 @@
 
   .arrivals {
     margin-top: 1rem;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+  }
+
+  .times-grid {
+    display: flex;
+    flex-direction: column;
+    min-width: fit-content;
+  }
+
+  .route-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .route-number {
+    min-width: 3rem;
+    font-weight: bold;
+    margin-right: 1rem;
+  }
+
+  .time-cell {
+    min-width: 4rem;
+    text-align: center;
+    font-family: monospace;
+    margin-right: 0rem;
   }
 </style>

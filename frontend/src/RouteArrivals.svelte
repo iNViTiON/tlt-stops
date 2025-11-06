@@ -64,12 +64,16 @@
 
   .times {
     display: flex;
-    flex-wrap: wrap;
     margin-left: 1rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
   }
 
   .time {
     margin-right: 1rem;
     font-family: monospace;
+    flex-shrink: 0;
   }
 </style>
