@@ -7,9 +7,12 @@
   function getIcon(type: string): string {
     switch (type) {
       case 'bus': return '🚌';
+      case 'commercialbus': return '🚍';
+      case 'regionalbus': return '🚍';
+      case 'train': return '🚆';
       case 'tram': return '🚋';
       case 'trolleybus': return '🚎';
-      default: return '🚗';
+      default: return '❓';
     }
   }
 
@@ -31,8 +34,7 @@
   <div class="times">
     {#each arrivals as arrival, i}
       <span class="time">
-        {countdowns[i]}
-        {#if arrival.isLowEntry}♿{/if}
+        {countdowns[i]}{#if arrival.isLowEntry}♿{/if}
       </span>
     {/each}
   </div>

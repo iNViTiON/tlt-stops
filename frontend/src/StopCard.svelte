@@ -5,6 +5,8 @@
 
   export let stop: StopArrival;
   export let hiddenRoutes: string[] = [];
+  export let selectedRoute: string | undefined = undefined;
+  export let browsing: boolean = false;
 
   const dispatch = createEventDispatcher();
 
@@ -25,14 +27,23 @@
 <div class="stop-card">
   <div class="stop-header">
     <h3>{stop.name}</h3>
-    <button class="remove-btn" onclick={() => dispatch('remove')}>✕</button>
-    <button class="filter-btn" onclick={() => showFilters = !showFilters}>⚙️</button>
+    {#if !browsing}
+      <button class="remove-btn" onclick={() => dispatch('remove')}>✕</button>
+      <button class="filter-btn" onclick={() => showFilters = !showFilters}>⚙️</button>
+    {/if}
   </div>
 
-  {#if showFilters}
+  {#if showFilters && !browsing}
     <div class="filters">
       {#each Object.entries(stop.arrivals) as [type, routes]}
-        {#each Object.entries(routes) as [route]}
+        {@const sortedRoutes = (browsing && selectedRoute)
+          ? Object.entries(routes).sort(([a], [b]) => {
+              if (a === selectedRoute) return -1;
+              if (b === selectedRoute) return 1;
+              return 0;
+            })
+          : Object.entries(routes)}
+        {#each sortedRoutes as [route]}
           <label>
             <input
               type="checkbox"
@@ -51,7 +62,14 @@
       <p>No arrivals available at this time.</p>
     {:else}
       {#each Object.entries(stop.arrivals) as [type, routes]}
-        {#each Object.entries(routes) as [route, arrivals]}
+        {@const sortedRoutes = (browsing && selectedRoute)
+          ? Object.entries(routes).sort(([a], [b]) => {
+              if (a === selectedRoute) return -1;
+              if (b === selectedRoute) return 1;
+              return 0;
+            })
+          : Object.entries(routes)}
+        {#each sortedRoutes as [route, arrivals]}
           {#if !hiddenRoutes.includes(route)}
             <RouteArrivals {type} {route} {arrivals} />
           {/if}

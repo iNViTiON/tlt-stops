@@ -54,6 +54,8 @@
         hidden[stop.id] = [];
         localStorage.setItem('hiddenRoutes', JSON.stringify(hidden));
       }
+      history.pushState({}, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
     }
   }
 
@@ -308,6 +310,8 @@
         <StopCard 
           stop={stopData} 
           hiddenRoutes={hiddenRoutes[selectedStopId] || []}
+          selectedRoute={selectedRoute}
+          browsing={true}
           on:toggleHidden={(e) => toggleHiddenRoute(selectedStopId, e.detail)}
         />
       </div>
