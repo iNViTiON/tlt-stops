@@ -112,7 +112,7 @@
                   {@const index = allArrivals.indexOf(arrival)}
                   {countdowns[index]}{#if arrival.isLowEntry}♿{/if}
                   <!-- svelte-ignore block_empty -->
-                  {time}{#if !arrival.isLowEntry} {/if}
+                  <br>{time}{#if !arrival.isLowEntry} {/if}
                 {:else}
                   ———————
                 {/if}
