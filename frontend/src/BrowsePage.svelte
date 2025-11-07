@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import StopCard from './StopCard.svelte';
   import type { StopArrival, FavoriteStop, RawStopArrival } from './lib/types';
 
@@ -17,8 +17,31 @@
   let loading = $state(false);
   let hiddenRoutes = $state(loadHiddenRoutes());
   let favorites = $state<FavoriteStop[]>(loadFavorites());
+  let nextUpdateTime = $state<number | null>(null);
 
   const API_BASE = '/api';
+
+  function calculateNextUpdateDelay(firstArrivalMinutes: number): number {
+    if (firstArrivalMinutes > 10) return 60_000;
+    if (firstArrivalMinutes >= 5) return 30_000;
+    if (firstArrivalMinutes >= 3) return 15_000;
+    if (firstArrivalMinutes >= 2) return 10_000;
+    return 5_000;
+  }
+
+  function getFirstArrivalTime(stop: StopArrival, stopId: string): number | null {
+    const hidden = hiddenRoutes[stopId] || [];
+    let minTime: number = Number.MAX_SAFE_INTEGER;
+    for (const types of Object.values(stop.arrivals)) {
+      for (const [route, arrivals] of Object.entries(types)) {
+        if (hidden.includes(route)) continue;
+        for (const arrival of arrivals) {
+          minTime = Math.min(minTime, arrival.time);
+        }
+      }
+    }
+    return minTime === Number.MAX_SAFE_INTEGER ? null : minTime;
+  }
 
   function loadFavorites(): FavoriteStop[] {
     const stored = localStorage.getItem('favoriteStops');
@@ -111,39 +134,10 @@
     }
   }
 
-  async function fetchArrivalsFor(stopId: string) {
-    const response = await fetch(`${API_BASE}/arrivals?stops=${stopId}`);
-    if (response.ok) {
-      const data: { stops: (RawStopArrival | null)[] } = await response.json();
-      const rawStop = data.stops[0];
-      if (rawStop && rawStop.arrivals) {
-        // Convert ISO time strings to timestamps
-        const arrivals: StopArrival['arrivals'] = {};
-        for (const [type, routes] of Object.entries(rawStop.arrivals)) {
-          arrivals[type] = {};
-          for (const [route, arrivalList] of Object.entries(routes)) {
-            arrivals[type][route] = arrivalList.map(a => ({
-              time: new Date(a.time).getTime(),
-              timeString: a.time,
-              isLowEntry: a.isLowEntry
-            }));
-          }
-        }
-        stopData = {
-          id: selectedStopId,
-          name: rawStop.name || '',
-          arrivals
-        };
-      } else {
-        stopData = null;
-      }
-    }
-  }
-
-  async function fetchStopData() {
+  async function fetchStopData(showLoading: boolean = true) {
     if (!selectedStopId) return;
     console.log('selectedStopId:', selectedStopId);
-    loading = true;
+    if (showLoading) loading = true;
     try {
       const response = await fetch(`${API_BASE}/arrivals?stops=${selectedStopId}`);
       if (response.ok) {
@@ -168,6 +162,15 @@
             name: rawStop.name || '',
             arrivals
           };
+          // Calculate next update time
+          const firstArrival = getFirstArrivalTime(stopData, selectedStopId);
+          if (firstArrival !== null) {
+            const minutesUntilArrival = Math.floor((firstArrival - Date.now()) / 60000);
+            const delay = calculateNextUpdateDelay(minutesUntilArrival);
+            nextUpdateTime = Date.now() + delay;
+          } else {
+            nextUpdateTime = Date.now() + 60000; // 1 min
+          }
         } else {
           stopData = null;
         }
@@ -180,7 +183,7 @@
       console.error('Error fetching arrivals:', error);
       stopData = null;
     }
-    loading = false;
+    if (showLoading) loading = false;
   }  function updateURL() {
     const params = new URLSearchParams();
     if (selectedType) params.set('type', selectedType);
@@ -216,7 +219,7 @@
     }
 
     // Start arrivals fetch concurrently if stop is in URL
-    const arrivalsPromise = urlStop ? fetchArrivalsFor(urlStop) : Promise.resolve();
+    const arrivalsPromise = urlStop ? fetchStopData(false) : Promise.resolve();
 
     // Sequential choices restoration
     await fetchTypes();
@@ -266,13 +269,31 @@
     // After validation, ensure the URL reflects only valid selections
     updateURL();
   });
+
+  let interval: number | undefined;
+
+  onMount(() => {
+    interval = setInterval(() => {
+      if (selectedStopId && nextUpdateTime && Date.now() >= nextUpdateTime) {
+        fetchStopData(false);
+      }
+    }, 5000);
+  });
+
+  onDestroy(() => {
+    if (interval) clearInterval(interval);
+  });
+
+  onDestroy(() => {
+    if (interval) clearInterval(interval);
+  });
 </script>
 
 <div class="browse">
   <div class="selectors">
     <label>
       Transport Type:
-      <select bind:value={selectedType} onchange={async () => { routes = []; selectedRoute = ''; selectedDirection = ''; selectedStopId = ''; stopData = null; await fetchRoutesFor(selectedType); updateURL(); }}>
+      <select bind:value={selectedType} onchange={async () => { routes = []; selectedRoute = ''; selectedDirection = ''; selectedStopId = ''; stopData = null; nextUpdateTime = null; await fetchRoutesFor(selectedType); updateURL(); }}>
         <option value="">Select type</option>
         {#each types as type}
           <option value={type}>{type}</option>
@@ -282,7 +303,7 @@
 
     <label>
       Route:
-      <select bind:value={selectedRoute} onchange={async () => { directions = []; selectedDirection = ''; selectedStopId = ''; stopData = null; await fetchDirectionsFor(selectedType, selectedRoute); updateURL(); }} disabled={!selectedType}>
+      <select bind:value={selectedRoute} onchange={async () => { directions = []; selectedDirection = ''; selectedStopId = ''; stopData = null; nextUpdateTime = null; await fetchDirectionsFor(selectedType, selectedRoute); updateURL(); }} disabled={!selectedType}>
         <option value="">Select route</option>
         {#each routes as route}
           <option value={route}>{route}</option>
@@ -292,7 +313,7 @@
 
     <label>
       Direction:
-            <select bind:value={selectedDirection} onchange={async () => { stops = []; selectedStopId = ''; stopData = null; await fetchStopsFor(selectedType, selectedRoute, selectedDirection); updateURL(); }} disabled={!selectedRoute}>
+            <select bind:value={selectedDirection} onchange={async () => { stops = []; selectedStopId = ''; stopData = null; nextUpdateTime = null; await fetchStopsFor(selectedType, selectedRoute, selectedDirection); updateURL(); }} disabled={!selectedRoute}>
         <option value="">Select direction</option>
         {#each directions as direction}
           <option value={direction}>{direction}</option>
@@ -302,7 +323,7 @@
 
     <label>
       Stop:
-      <select bind:value={selectedStopId} onchange={async () => { stopData = null; await fetchArrivalsFor(selectedStopId); updateURL(); }} disabled={!selectedDirection}>
+      <select bind:value={selectedStopId} onchange={async () => { stopData = null; nextUpdateTime = null; await fetchStopData(true); updateURL(); }} disabled={!selectedDirection}>
         <option value="">Select stop</option>
         {#each stops as [id, name]}
           <option value={id}>{name}</option>
