@@ -52,7 +52,7 @@
   $: allTimes = [...new Set(allArrivals.map(a => a.time))].sort();
 
   $: visibleRoutes = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
-    Object.entries(routes).filter(([route]) => !hiddenRoutes.includes(route)).map(([route]) => route)
+    Object.entries(routes).filter(([route]) => browsing || !hiddenRoutes.includes(route)).map(([route]) => route)
   ).sort((a, b) => {
     if (browsing && selectedRoute) {
       if (a === selectedRoute) return -1;
