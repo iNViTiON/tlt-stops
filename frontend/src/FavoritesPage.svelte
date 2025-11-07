@@ -130,7 +130,18 @@
   function removeFavorite(stopId: string) {
     const favorites = loadFavorites().filter(f => f.id !== stopId);
     localStorage.setItem('favoriteStops', JSON.stringify(favorites));
+    // Remove any hidden routes saved for this stop
+    const hidden = loadHiddenRoutes();
+    if (hidden[stopId]) {
+      delete hidden[stopId];
+      localStorage.setItem('hiddenRoutes', JSON.stringify(hidden));
+      hiddenRoutes = hidden;
+    }
+    // Remove from displayed stops and next update map
     stops = stops.filter(s => s.id !== stopId);
+    if (nextUpdateTimes[stopId]) {
+      delete nextUpdateTimes[stopId];
+    }
   }
 
   function toggleHiddenRoute(stopId: string, route: string) {
@@ -153,12 +164,18 @@
     <p>No favorite stops yet. Add some from the Browse tab!</p>
   {:else}
     {#each stops as stop}
-      <StopCard
-        {stop}
-        hiddenRoutes={hiddenRoutes[stop.id] || []}
-        on:remove={() => removeFavorite(stop.id)}
-        on:toggleHidden={(e) => toggleHiddenRoute(stop.id, e.detail)}
-      />
+      {#if stop}
+        <StopCard
+          {stop}
+          hiddenRoutes={hiddenRoutes[stop.id] || []}
+          on:remove={() => removeFavorite(stop.id)}
+          on:toggleHidden={(e) => toggleHiddenRoute(stop.id, e.detail)}
+        />
+      {:else}
+        <div class="stop-card">
+          <p>No arrival information available for this stop.</p>
+        </div>
+      {/if}
     {/each}
   {/if}
 </div>

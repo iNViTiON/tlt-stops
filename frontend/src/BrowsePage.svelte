@@ -16,6 +16,7 @@
   let stopData = $state<StopArrival | null>(null);
   let loading = $state(false);
   let hiddenRoutes = $state(loadHiddenRoutes());
+  let favorites = $state<FavoriteStop[]>(loadFavorites());
 
   const API_BASE = '/api';
 
@@ -30,31 +31,42 @@
   }
 
   function isFavorite(stopId: string): boolean {
-    return loadFavorites().some(f => f.id === stopId);
+    if (!stopId) return false;
+    const id = String(stopId).trim();
+    return favorites.some(f => String(f.id).trim() === id);
   }
 
   function toggleFavorite(stop: StopArrival) {
-    const favorites = loadFavorites();
-    const existing = favorites.find(f => f.id === stop.id);
+    const id = String(stop.id || selectedStopId || '').trim();
+    if (!id) return;
+    const existing = favorites.find(f => String(f.id).trim() === id);
     if (existing) {
-      // remove
-      const newFavs = favorites.filter(f => f.id !== stop.id);
-      localStorage.setItem('favoriteStops', JSON.stringify(newFavs));
+      // remove favorite
+      favorites = favorites.filter(f => String(f.id).trim() !== id);
+      localStorage.setItem('favoriteStops', JSON.stringify(favorites));
+      // remove any hiddenRoutes entry for this stop
+      const hidden = JSON.parse(localStorage.getItem('hiddenRoutes') || '{}');
+      if (hidden[id]) {
+        delete hidden[id];
+        localStorage.setItem('hiddenRoutes', JSON.stringify(hidden));
+        // update reactive hiddenRoutes
+        hiddenRoutes = hidden;
+      }
     } else {
       // add, but limit to 5 favorites
       if (favorites.length >= 5) {
         alert('You can only have up to 5 favorite stops.');
         return;
       }
-      favorites.push({ id: stop.id, name: stop.name });
+      favorites = [...favorites, { id, name: stop.name }];
       localStorage.setItem('favoriteStops', JSON.stringify(favorites));
-      // initialize hidden routes
+      // initialize hidden routes for this stop if missing
       const hidden = JSON.parse(localStorage.getItem('hiddenRoutes') || '{}');
-      if (!hidden[stop.id]) {
-        hidden[stop.id] = [];
+      if (!hidden[id]) {
+        hidden[id] = [];
         localStorage.setItem('hiddenRoutes', JSON.stringify(hidden));
+        hiddenRoutes = hidden;
       }
-      history.pushState({}, '', '/');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
   }
@@ -118,7 +130,7 @@
           }
         }
         stopData = {
-          id: rawStop.id || stopId,
+          id: selectedStopId,
           name: rawStop.name || '',
           arrivals
         };
@@ -152,7 +164,7 @@
             }
           }
           stopData = {
-            id: rawStop.id || selectedStopId,
+            id: selectedStopId,
             name: rawStop.name || '',
             arrivals
           };
