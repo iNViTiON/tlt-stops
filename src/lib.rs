@@ -8,7 +8,7 @@ use crate::models::*;
 use crate::services::*;
 use crate::str_utils::splits_commas;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use utoipa::OpenApi;
 use worker::*;
@@ -28,7 +28,14 @@ use worker::*;
         get_stops_by_route_type_number_direction,
         get_stop_arrivals,
     ),
-    components(schemas(HealthStatus, StopResponse, PostArrivalsResponse, StopArrivals, StopArrival, Arrival))
+    components(schemas(
+        HealthStatus,
+        StopResponse,
+        PostArrivalsResponse,
+        StopArrivals,
+        StopArrival,
+        Arrival
+    ))
 )]
 struct ApiDoc;
 
@@ -393,8 +400,18 @@ async fn get_stop_arrivals(req: Request, _ctx: RouteContext<()>) -> Result<Respo
         .into_iter()
         .map(|state| match state {
             StopArrivalState::Ready(ready_stop_arrivals) => Ok(Some(ready_stop_arrivals.0)),
+            StopArrivalState::Valid(stop_data) => {
+                let stop_arrival = StopArrivals {
+                    id: stop_data.data.siri_id.to_string(),
+                    name: stop_data.data.name.to_string(),
+                    arrivals: HashMap::new(),
+                };
+                Ok(Some(Rc::new(stop_arrival)))
+            }
             StopArrivalState::Invalid => Ok(None),
-            _ => Ok(None), // No more arrivals for today
+            StopArrivalState::StopId(_) => Err(ParsingUpstreamError::Error(
+                "unreachable state: StopId after validation".to_string(),
+            )),
         })
         .collect::<core::result::Result<Vec<Option<Rc<StopArrivals>>>, ParsingUpstreamError>>()
         .map(|stops| PostArrivalsResponse { stops });

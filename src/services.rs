@@ -3,8 +3,7 @@ use crate::models::*;
 use crate::str_utils::*;
 
 use futures::TryStreamExt;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
@@ -110,11 +109,9 @@ impl TransportService {
         let stop_map = self.get_stop_map().await?;
         let cache = Caches::get_cache();
         let stop_arrival_cache = &cache.stop_arrival;
-        let stop_arrivals =
-            split_arrival_by_stops(arrivals_bytes)
-                .flat_map(|stop_arrival_raw| {
-                    self::extract_arrival_stop_data_from_line(stop_arrival_raw, &stop_map)
-                });
+        let stop_arrivals = split_arrival_by_stops(arrivals_bytes).flat_map(|stop_arrival_raw| {
+            self::extract_arrival_stop_data_from_line(stop_arrival_raw, &stop_map)
+        });
         for stop_arrival in stop_arrivals {
             let stop_arrival = stop_arrival?;
             let stop_arrival = Rc::new(stop_arrival);
