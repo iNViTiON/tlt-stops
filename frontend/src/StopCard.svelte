@@ -23,6 +23,18 @@
     dispatch('toggleHidden', route);
   }
 
+  function getIcon(type: string): string {
+    switch (type) {
+      case 'bus': return '🚌';
+      case 'commercialbus': return '🚍';
+      case 'regionalbus': return '🚍';
+      case 'train': return '🚆';
+      case 'tram': return '🚋';
+      case 'trolleybus': return '🚎';
+      default: return '❓';
+    }
+  }
+
   function formatTime(timestamp: number): string {
     const date = new Date(timestamp);
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -104,6 +116,7 @@
           {@const routeArrivals = allArrivals.filter(a => a.route === route)}
           {@const routeType = routeArrivals[0]?.type || ''}
           <div class="route-row">
+            <span class="route-icon">{getIcon(routeType)}</span>
             <span class="route-number">{route}</span>
             {#each allTimes as time}
               {@const arrival = routeArrivals.find(a => a.time === time)}
@@ -176,6 +189,11 @@
     display: flex;
     align-items: center;
     margin-bottom: 0.5rem;
+  }
+
+  .route-icon {
+    font-size: 1.5rem;
+    margin-right: 0.5rem;
   }
 
   .route-number {
