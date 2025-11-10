@@ -170,7 +170,7 @@ async fn get_types(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
                 .collect::<Vec<String>>();
             types.sort_unstable();
             let types = Rc::new(types);
-            cache.types.set(types.clone());
+            cache.types.set(types.clone()).ok();
             types
         }
     };

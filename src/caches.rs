@@ -29,26 +29,23 @@ impl<T> CacheData<T> {
         }
     }
 
-    pub fn set(&self, data: Rc<T>) {
+    pub fn set(&self, data: Rc<T>) -> Result<(), ()> {
         let expires_at = now_secs().saturating_add(self.ttl_secs);
-        self.record
-            .borrow_mut()
-            .replace(CacheRecord { data, expires_at });
+        let mut record = self.record.try_borrow_mut().map_err(|_| ())?;
+        record.replace(CacheRecord { data, expires_at });
+        Ok(())
     }
 
-    fn purge_expired(&self) {
-        if let Some(record) = self.record.borrow().as_ref()
-            && now_secs() > record.expires_at
-        {
-            self.record.take();
-        }
-    }
     pub fn get(&self) -> Option<Rc<T>> {
-        self.purge_expired();
-        self.record
-            .borrow()
-            .as_ref()
-            .map(|record| Rc::clone(&record.data))
+        let record = self.record.try_borrow().ok()?;
+        let record = (*record).as_ref()?;
+        if now_secs() > record.expires_at {
+            drop(record);
+            let _ = self.record.try_borrow_mut().ok().map(|mut rec| rec.take());
+            None
+        } else {
+            Some(Rc::clone(&record.data))
+        }
     }
 }
 
@@ -67,29 +64,27 @@ where
         }
     }
 
-    pub fn set(&self, key: K, data: Rc<T>) {
+    pub fn set(&self, key: K, data: Rc<T>) -> Result<(), ()> {
         let expires_at = now_secs().saturating_add(self.ttl_secs);
-        self.record
-            .borrow_mut()
-            .insert(key, CacheRecord { data, expires_at });
+        let mut record = self.record.try_borrow_mut().map_err(|_| ())?;
+        record.insert(key, CacheRecord { data, expires_at });
+        Ok(())
     }
 
-    fn purge_expired_with_key(&self, key: &K) {
-        let expired = self
-            .record
-            .borrow()
-            .get(key)
-            .is_some_and(|record| now_secs() > record.expires_at);
-        if expired {
-            self.record.borrow_mut().remove(key);
-        }
-    }
     pub fn get(&self, key: &K) -> Option<Rc<T>> {
-        self.purge_expired_with_key(key);
-        self.record
-            .borrow()
-            .get(key)
-            .map(|record| Rc::clone(&record.data))
+        let record = self.record.try_borrow().ok()?;
+        let record = record.get(key)?;
+        if now_secs() > record.expires_at {
+            drop(record);
+            let _ = self
+                .record
+                .try_borrow_mut()
+                .ok()
+                .map(|mut rec| rec.remove(key));
+            None
+        } else {
+            Some(Rc::clone(&record.data))
+        }
     }
 }
 

@@ -115,7 +115,7 @@ impl TransportService {
         for stop_arrival in stop_arrivals {
             let stop_arrival = stop_arrival?;
             let stop_arrival = Rc::new(stop_arrival);
-            stop_arrival_cache.set(stop_arrival.id.clone(), stop_arrival);
+            stop_arrival_cache.set(stop_arrival.id.clone(), stop_arrival).ok();
         }
         Ok(())
     }
@@ -150,7 +150,7 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.routes_raw.set(Rc::new(buf));
+            cache.routes_raw.set(Rc::new(buf)).ok();
         }
 
         Ok(type_set)
@@ -194,7 +194,7 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.routes_raw.set(Rc::new(buf));
+            cache.routes_raw.set(Rc::new(buf)).ok();
         }
 
         Ok(route_map)
@@ -239,11 +239,11 @@ impl TransportService {
         };
 
         if let Some(buf) = buf {
-            cache.stops_raw.set(Rc::new(buf));
+            cache.stops_raw.set(Rc::new(buf)).ok();
         }
 
         let stop_map = Rc::new(stop_map);
-        cache.stop_map.set(Rc::clone(&stop_map));
+        cache.stop_map.set(Rc::clone(&stop_map)).ok();
 
         Ok(stop_map)
     }
