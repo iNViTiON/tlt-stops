@@ -224,8 +224,6 @@ pub fn extract_stop_arrival_list_data(
     let stop_id = unsafe { str::from_utf8_unchecked(stop_id) };
     Ok(StopArrivals {
         id: stop_id.to_string(),
-        // r#type: unsafe { str::from_utf8_unchecked(arrival_lines) }.to_string(),
-        // name: unsafe { str::from_utf8_unchecked(arrival_lines) }.to_string(),
         name: TransportService::get_stop_name_by_id(stop_id, stop_map)
             .map(|name| name.to_string())
             .ok_or(ParsingUpstreamError::Error(String::from(
@@ -240,13 +238,14 @@ pub fn extract_arrival_stop_data_from_line(
     stop_map: &HashMap<String, Rc<StopData>>,
 ) -> impl Iterator<Item = core::result::Result<StopArrivals, ParsingUpstreamError>> {
     let mut start = 0usize;
-    memmem::find_iter(line, b"\nstosp,")
+    memmem::find_iter(line, b"\nstop,")
         .chain(std::iter::once(line.len()))
         .map(move |i| {
             let part = &line[start..i];
             start = i + 1;
             part
         })
+        .filter(|s| memchr::memchr(b'\n', s).is_some())
         .map(|s| extract_stop_arrival_list_data(s, stop_map))
 }
 
