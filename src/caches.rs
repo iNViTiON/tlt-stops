@@ -38,13 +38,13 @@ impl<T> CacheData<T> {
 
     pub fn get(&self) -> Option<Rc<T>> {
         let record = self.record.try_borrow().ok()?;
-        let record = (*record).as_ref()?;
-        if now_secs() > record.expires_at {
+        let record_ref = (*record).as_ref()?;
+        if now_secs() > record_ref.expires_at {
             drop(record);
             let _ = self.record.try_borrow_mut().ok().map(|mut rec| rec.take());
             None
         } else {
-            Some(Rc::clone(&record.data))
+            Some(Rc::clone(&record_ref.data))
         }
     }
 }
@@ -73,8 +73,8 @@ where
 
     pub fn get(&self, key: &K) -> Option<Rc<T>> {
         let record = self.record.try_borrow().ok()?;
-        let record = record.get(key)?;
-        if now_secs() > record.expires_at {
+        let record_ref = record.get(key)?;
+        if now_secs() > record_ref.expires_at {
             drop(record);
             let _ = self
                 .record
@@ -83,7 +83,7 @@ where
                 .map(|mut rec| rec.remove(key));
             None
         } else {
-            Some(Rc::clone(&record.data))
+            Some(Rc::clone(&record_ref.data))
         }
     }
 }
