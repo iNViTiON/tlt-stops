@@ -102,7 +102,7 @@ impl Caches {
 
     pub fn new() -> Self {
         let routes_raw = CacheData::new(60 * 60 * 3);
-        let stop_arrival = CacheDataWithKeys::new(10);
+        let stop_arrival = CacheDataWithKeys::new(9);
         let stop_map = CacheData::new(60 * 60 * 3);
         let stops_raw = CacheData::new(60 * 60 * 3);
         let types = CacheData::new(60 * 60 * 24);
