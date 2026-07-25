@@ -45,6 +45,19 @@ The repository is organized as follows:
 ## Installation
 
 ### Prerequisites
+
+#### With Nix (recommended)
+The repository ships a `flake.nix` dev shell with the full toolchain — Rust with
+the `wasm32-unknown-unknown` target, `lld`, `wasm-bindgen`, `binaryen`, and Bun:
+
+```bash
+nix develop
+```
+
+With [direnv](https://direnv.net/) installed, `direnv allow` loads the same shell
+automatically on `cd`.
+
+#### Manually
 - Install [Bun.js](https://bun.sh/)
 - Install [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
 - Install [Rust](https://www.rust-lang.org/tools/install)
