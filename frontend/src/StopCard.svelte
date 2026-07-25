@@ -26,11 +26,11 @@
   function getIcon(type: string): string {
     switch (type) {
       case 'bus': return '🚌';
-      case 'commercialbus': return '🚍';
+      case 'commercialbus':
       case 'regionalbus': return '🚍';
       case 'train': return '🚆';
       case 'tram': return '🚋';
-      case 'trol': return '🚎';
+      case 'trol':
       case 'trolleybus': return '🚎';
       default: return '❓';
     }
