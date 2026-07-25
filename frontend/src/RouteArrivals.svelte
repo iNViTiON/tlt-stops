@@ -11,6 +11,7 @@
       case 'regionalbus': return '🚍';
       case 'train': return '🚆';
       case 'tram': return '🚋';
+      case 'trol': return '🚎';
       case 'trolleybus': return '🚎';
       default: return '❓';
     }

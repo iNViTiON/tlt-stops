@@ -146,13 +146,13 @@ fn health_check(_req: Request, _ctx: RouteContext<()>) -> Result<Response> {
 
 /// Get all transport types
 ///
-/// Returns a list of all available transport types (e.g., bus, tram, trolleybus)
+/// Returns a list of all available transport types (e.g., bus, tram, trol)
 #[utoipa::path(
     get,
     path = "/api/types",
     responses(
         (status = 200, description = "List of transport types", body = Vec<String>,
-         example = json!(["bus", "tram", "trolleybus"]))
+         example = json!(["bus", "tram", "trol"]))
     ),
     tag = "Routes"
 )]
