@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { StopArrival } from './lib/types';
+  import type { ArrivalEntry, StopArrival } from './lib/types';
   import { currentTime } from './lib/stores';
 
   export let stop: StopArrival;
@@ -11,13 +11,6 @@
   const dispatch = createEventDispatcher();
 
   let showFilters = false;
-
-  function getVisibleRoutes() {
-    const allRoutes = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
-      Object.entries(routes).map(([route]) => `${type}-${route}`)
-    );
-    return allRoutes.filter(route => !hiddenRoutes.includes(route.split('-')[1]));
-  }
 
   function toggleRoute(route: string) {
     dispatch('toggleHidden', route);
@@ -36,42 +29,62 @@
     }
   }
 
-  function formatTime(timestamp: number): string {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  // One formatter for the component instead of one per cell per second.
+  const timeFormat = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+
+  type Row = { route: string; type: string; slots: (ArrivalEntry | null)[] };
+  type Grid = { times: number[]; labels: string[]; rows: Row[] };
+
+  // Columns are unique departure instants, ordered numerically. Sorting the
+  // formatted "HH:MM:SS" text instead would put 00:10 tomorrow ahead of 23:55
+  // tonight.
+  function buildGrid(
+    stop: StopArrival,
+    hiddenRoutes: string[],
+    browsing: boolean,
+    selectedRoute: string | undefined
+  ): Grid {
+    const column = new Map<number, number>();
+    const visible: Array<{ route: string; type: string; arrivals: ArrivalEntry[] }> = [];
+
+    for (const [type, routes] of Object.entries(stop.arrivals)) {
+      for (const [route, arrivals] of Object.entries(routes)) {
+        if (!browsing && hiddenRoutes.includes(route)) continue;
+        visible.push({ route, type, arrivals });
+        for (const arrival of arrivals) column.set(arrival.time, 0);
+      }
+    }
+
+    const times = [...column.keys()].sort((a, b) => a - b);
+    times.forEach((time, index) => column.set(time, index));
+
+    if (browsing && selectedRoute) {
+      const pinned = visible.findIndex(r => r.route === selectedRoute);
+      if (pinned > 0) visible.unshift(visible.splice(pinned, 1)[0]);
+    }
+
+    const rows = visible.map(({ route, type, arrivals }) => {
+      const slots: (ArrivalEntry | null)[] = new Array(times.length).fill(null);
+      for (const arrival of arrivals) slots[column.get(arrival.time)!] = arrival;
+      return { route, type, slots };
+    });
+
+    return { times, labels: times.map(time => timeFormat.format(time)), rows };
   }
 
-  $: allArrivals = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
-    Object.entries(routes).flatMap(([route, arrivals]) =>
-      arrivals.map(arrival => ({
-        route,
-        type,
-        timestamp: arrival.time,
-        time: formatTime(arrival.time),
-        isLowEntry: arrival.isLowEntry
-      }))
-    )
-  );
+  // Rebuilt only when the data or the filters change.
+  $: grid = buildGrid(stop, hiddenRoutes, browsing, selectedRoute);
 
-  $: countdowns = allArrivals.map(a => {
-    const now = $currentTime;
-    const diff = Math.floor((a.timestamp - now) / 1000);
+  // Ticks every second, but a countdown depends only on the column instant,
+  // so this is one pass over columns rather than over every cell.
+  $: countdowns = grid.times.map(time => {
+    const diff = Math.floor((time - $currentTime) / 1000);
     if (diff <= 0) return 'Now';
     const minutes = Math.floor(diff / 60);
     const seconds = diff % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  });
-
-  $: allTimes = [...new Set(allArrivals.map(a => a.time))].sort();
-
-  $: visibleRoutes = Object.entries(stop.arrivals).flatMap(([type, routes]) =>
-    Object.entries(routes).filter(([route]) => browsing || !hiddenRoutes.includes(route)).map(([route]) => route)
-  ).sort((a, b) => {
-    if (browsing && selectedRoute) {
-      if (a === selectedRoute) return -1;
-      if (b === selectedRoute) return 1;
-    }
-    return 0;
   });
 </script>
 
@@ -109,24 +122,20 @@
   {/if}
 
   <div class="arrivals">
-    {#if allTimes.length === 0}
+    {#if grid.times.length === 0}
       <p>No arrivals available at this time.</p>
     {:else}
       <div class="times-grid">
-        {#each visibleRoutes as route}
-          {@const routeArrivals = allArrivals.filter(a => a.route === route)}
-          {@const routeType = routeArrivals[0]?.type || ''}
+        {#each grid.rows as row}
           <div class="route-row">
-            <span class="route-icon">{getIcon(routeType)}</span>
-            <span class="route-number">{route}</span>
-            {#each allTimes as time}
-              {@const arrival = routeArrivals.find(a => a.time === time)}
+            <span class="route-icon">{getIcon(row.type)}</span>
+            <span class="route-number">{row.route}</span>
+            {#each row.slots as arrival, column}
               <span class="time-cell">
                 {#if arrival}
-                  {@const index = allArrivals.indexOf(arrival)}
-                  {countdowns[index]}{#if arrival.isLowEntry}♿{/if}
-                  <!-- svelte-ignore block_empty -->
-                  <br>{time}{#if !arrival.isLowEntry} {/if}
+                  {countdowns[column]}{#if arrival.isLowEntry}♿{/if}
+                  <!-- pads cells without the ♿ glyph so columns stay aligned -->
+                  <br>{grid.labels[column]}{#if !arrival.isLowEntry}{' '}{/if}
                 {:else}
                   ———————
                 {/if}

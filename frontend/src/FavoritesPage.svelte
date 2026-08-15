@@ -61,23 +61,11 @@
         for (let i = 0; i < data.stops.length; i++) {
           const rawStop = data.stops[i];
           if (rawStop && rawStop.arrivals) {
-            // Convert ISO time strings to timestamps
-            const arrivals: StopArrival['arrivals'] = {};
-            for (const [type, routes] of Object.entries(rawStop.arrivals)) {
-              arrivals[type] = {};
-              for (const [route, arrivalList] of Object.entries(routes)) {
-                arrivals[type][route] = arrivalList.map(a => ({
-                  time: new Date(a.time).getTime(),
-                  timeString: a.time,
-                  isLowEntry: a.isLowEntry
-                }));
-              }
-            }
-            
+            // API sends epoch milliseconds — usable as-is, no parsing pass.
             const stopData: StopArrival = {
               id: chunk[i].id,
               name: chunk[i].name,
-              arrivals
+              arrivals: rawStop.arrivals
             };
             results.push(stopData);
             

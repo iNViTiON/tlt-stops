@@ -145,22 +145,11 @@
         console.log('API response data:', data);
         const rawStop = data.stops[0];
         if (rawStop && rawStop.arrivals) {
-          // Convert ISO time strings to timestamps
-          const arrivals: StopArrival['arrivals'] = {};
-          for (const [type, routes] of Object.entries(rawStop.arrivals)) {
-            arrivals[type] = {};
-            for (const [route, arrivalList] of Object.entries(routes)) {
-              arrivals[type][route] = arrivalList.map(a => ({
-                time: new Date(a.time).getTime(),
-                timeString: a.time,
-                isLowEntry: a.isLowEntry
-              }));
-            }
-          }
+          // API sends epoch milliseconds — usable as-is, no parsing pass.
           stopData = {
             id: selectedStopId,
             name: rawStop.name || '',
-            arrivals
+            arrivals: rawStop.arrivals
           };
           // Calculate next update time
           const firstArrival = getFirstArrivalTime(stopData, selectedStopId);

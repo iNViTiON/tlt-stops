@@ -53,12 +53,13 @@ pub struct StopData {
 #[schema(example = json!(["1001", "Stop Name"]))]
 pub struct StopResponse(pub String, pub String);
 
-// string as ISO8601
-#[derive(ToSchema)]
-// #[serde(untagged)]
+/// Departure instant as Unix epoch milliseconds, UTC.
+///
+/// An integer rather than ISO8601: it sorts as-is, needs no parsing on the
+/// client, and drops a heap allocation per arrival on the worker.
 pub enum Arrival {
-    RegularEntry(String),
-    LowEntry(String),
+    RegularEntry(i64),
+    LowEntry(i64),
 }
 
 impl Serialize for Arrival {
@@ -79,6 +80,32 @@ impl Serialize for Arrival {
         map.end()
     }
 }
+
+// Serialize is hand-written above, so the schema is too — a derive would
+// document the enum shape instead of the emitted object.
+impl utoipa::PartialSchema for Arrival {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, SchemaFormat, Type};
+        ObjectBuilder::new()
+            .property(
+                "time",
+                ObjectBuilder::new()
+                    .schema_type(Type::Integer)
+                    .format(Some(SchemaFormat::KnownFormat(KnownFormat::Int64)))
+                    .description(Some("Departure time as Unix epoch milliseconds (UTC)"))
+                    .examples([serde_json::json!(1786000000000i64)]),
+            )
+            .required("time")
+            .property(
+                "isLowEntry",
+                ObjectBuilder::new()
+                    .schema_type(Type::Boolean)
+                    .description(Some("Present and true when the vehicle is low-entry")),
+            )
+            .into()
+    }
+}
+impl utoipa::ToSchema for Arrival {}
 
 #[derive(Serialize, ToSchema)]
 pub struct StopArrival {
