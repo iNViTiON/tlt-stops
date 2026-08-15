@@ -1,19 +1,21 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import type { ArrivalEntry, StopArrival } from './lib/types';
+  import { hiddenKey, isHiddenRoute } from './lib/hiddenRoutes';
   import { currentTime } from './lib/stores';
 
   export let stop: StopArrival;
   export let hiddenRoutes: string[] = [];
   export let selectedRoute: string | undefined = undefined;
+  export let selectedType: string | undefined = undefined;
   export let browsing: boolean = false;
 
   const dispatch = createEventDispatcher();
 
   let showFilters = false;
 
-  function toggleRoute(route: string) {
-    dispatch('toggleHidden', route);
+  function toggleRoute(type: string, route: string) {
+    dispatch('toggleHidden', hiddenKey(type, route));
   }
 
   function getIcon(type: string): string {
@@ -44,14 +46,15 @@
     stop: StopArrival,
     hiddenRoutes: string[],
     browsing: boolean,
-    selectedRoute: string | undefined
+    selectedRoute: string | undefined,
+    selectedType: string | undefined
   ): Grid {
     const column = new Map<number, number>();
     const visible: Array<{ route: string; type: string; arrivals: ArrivalEntry[] }> = [];
 
     for (const [type, routes] of Object.entries(stop.arrivals)) {
       for (const [route, arrivals] of Object.entries(routes)) {
-        if (!browsing && hiddenRoutes.includes(route)) continue;
+        if (!browsing && isHiddenRoute(hiddenRoutes, type, route)) continue;
         visible.push({ route, type, arrivals });
         for (const arrival of arrivals) column.set(arrival.time, 0);
       }
@@ -61,7 +64,9 @@
     times.forEach((time, index) => column.set(time, index));
 
     if (browsing && selectedRoute) {
-      const pinned = visible.findIndex(r => r.route === selectedRoute);
+      const pinned = visible.findIndex(
+        row => row.route === selectedRoute && (!selectedType || row.type === selectedType)
+      );
       if (pinned > 0) visible.unshift(visible.splice(pinned, 1)[0]);
     }
 
@@ -75,7 +80,7 @@
   }
 
   // Rebuilt only when the data or the filters change.
-  $: grid = buildGrid(stop, hiddenRoutes, browsing, selectedRoute);
+  $: grid = buildGrid(stop, hiddenRoutes, browsing, selectedRoute, selectedType);
 
   // Ticks every second, but a countdown depends only on the column instant,
   // so this is one pass over columns rather than over every cell.
@@ -99,20 +104,14 @@
 
   {#if showFilters && !browsing}
     <div class="filters">
+      <!-- Only rendered when !browsing, so no selected route to pin here. -->
       {#each Object.entries(stop.arrivals) as [type, routes]}
-        {@const sortedRoutes = (browsing && selectedRoute)
-          ? Object.entries(routes).sort(([a], [b]) => {
-              if (a === selectedRoute) return -1;
-              if (b === selectedRoute) return 1;
-              return 0;
-            })
-          : Object.entries(routes)}
-        {#each sortedRoutes as [route]}
+        {#each Object.entries(routes) as [route]}
           <label>
             <input
               type="checkbox"
-              checked={!hiddenRoutes.includes(route)}
-              onchange={() => toggleRoute(route)}
+              checked={!isHiddenRoute(hiddenRoutes, type, route)}
+              onchange={() => toggleRoute(type, route)}
             />
             {type} {route}
           </label>
