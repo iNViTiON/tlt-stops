@@ -28,14 +28,11 @@
             # without this. `cargo check` doesn't link, so it hides the gap.
             lld
 
-            # Rust/WASM worker build chain. worker-build is what
-            # wrangler.toml's [build] command invokes; it drives wasm-pack,
-            # wasm-bindgen, wasm-opt (binaryen) and esbuild for the shim.
+            # wrangler.toml's [build] command invokes this. It vendors its
+            # own wasm-pack / wasm-bindgen / wasm-opt / esbuild, so those are
+            # deliberately NOT in this list: putting them on PATH only risks
+            # shadowing the versions worker-build and wrangler expect.
             worker-build
-            wasm-pack
-            wasm-bindgen-cli
-            binaryen
-            esbuild
 
             # Frontend + tooling
             bun
@@ -47,16 +44,22 @@
             jq
           ];
 
-          # Top-level mkShell env attrs, NOT shellHook exports: only these
-          # propagate through direnv's `use flake`, which captures the shell
-          # via `nix print-dev-env`. shellHook-exported vars reach `nix
-          # develop` but not reliably direnv.
-          CARGO_BUILD_TARGET = "wasm32-unknown-unknown";
-          # worker-build shells out to these; pin them to the nix-provided
-          # binaries so nothing is fetched as an unpatched ELF at build time.
-          WASM_BINDGEN_PATH = "${pkgs.wasm-bindgen-cli}/bin/wasm-bindgen";
-          WASM_OPT_PATH = "${pkgs.binaryen}/bin/wasm-opt";
-          ESBUILD_BINARY_PATH = "${pkgs.esbuild}/bin/esbuild";
+          # Deliberately no build-tool env vars here.
+          #
+          # CARGO_BUILD_TARGET: .cargo/config.toml already sets build.target
+          # for this crate, and an env var outranks it — which would force
+          # host tools built via `cargo install` to cross-compile to wasm32
+          # too (openssl-sys then fails looking for a wasm OpenSSL sysroot).
+          #
+          # ESBUILD_BINARY_PATH: wrangler's esbuild JS wrapper refuses to
+          # start against a binary of a different version ("Host version
+          # 0.28.1 does not match binary version 0.27.2"). The vendored
+          # esbuild is a static Go binary and runs fine on NixOS unaided.
+          #
+          # If anything here ever does need an env var, add it as a top-level
+          # mkShell attr rather than a shellHook export — only top-level attrs
+          # survive direnv's `use flake`, which captures via
+          # `nix print-dev-env`.
 
           shellHook = ''
             # Project-local wrangler, version-matched to package.json
