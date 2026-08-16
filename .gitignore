@@ -1,3 +1,12 @@
 target
 node_modules
 .wrangler
+build
+
+# Nix / direnv
+.direnv
+result
+result-*
+
+# Local agent worktrees (not .claude itself — agent/skill definitions belong in git)
+.claude/worktrees
