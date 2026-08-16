@@ -109,8 +109,10 @@ impl TransportService {
         let stop_map = self.get_stop_map().await?;
         let cache = Caches::get_cache();
         let stop_arrival_cache = &cache.stop_arrival;
+        // One clock read and one timezone lookup for the whole batch.
+        let anchor = DayAnchor::now();
         let stop_arrivals = split_arrival_by_stops(arrivals_bytes).flat_map(|stop_arrival_raw| {
-            self::extract_arrival_stop_data_from_line(stop_arrival_raw, &stop_map)
+            self::extract_arrival_stop_data_from_line(stop_arrival_raw, &stop_map, anchor)
         });
         for stop_arrival in stop_arrivals {
             let stop_arrival = stop_arrival?;

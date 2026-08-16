@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { currentTime } from './lib/stores';
   import type { StopArrival, FavoriteStop, RawStopArrival } from './lib/types';
+  import { isHiddenRoute, toggleHidden } from './lib/hiddenRoutes';
   import StopCard from './StopCard.svelte';
 
   let stops = $state<StopArrival[]>([]);
@@ -22,9 +23,9 @@
   function getFirstArrivalTime(stop: StopArrival, stopId: string): number {
     const hidden = hiddenRoutes[stopId] || [];
     let minTime: number = Number.MAX_SAFE_INTEGER;
-    for (const types of Object.values(stop.arrivals)) {
-      for (const [route, arrivals] of Object.entries(types)) {
-        if (hidden.includes(route)) continue;
+    for (const [type, routes] of Object.entries(stop.arrivals)) {
+      for (const [route, arrivals] of Object.entries(routes)) {
+        if (isHiddenRoute(hidden, type, route)) continue;
         for (const arrival of arrivals) {
           minTime = Math.min(minTime, arrival.time);
         }
@@ -61,23 +62,11 @@
         for (let i = 0; i < data.stops.length; i++) {
           const rawStop = data.stops[i];
           if (rawStop && rawStop.arrivals) {
-            // Convert ISO time strings to timestamps
-            const arrivals: StopArrival['arrivals'] = {};
-            for (const [type, routes] of Object.entries(rawStop.arrivals)) {
-              arrivals[type] = {};
-              for (const [route, arrivalList] of Object.entries(routes)) {
-                arrivals[type][route] = arrivalList.map(a => ({
-                  time: new Date(a.time).getTime(),
-                  timeString: a.time,
-                  isLowEntry: a.isLowEntry
-                }));
-              }
-            }
-            
+            // API sends epoch milliseconds — usable as-is, no parsing pass.
             const stopData: StopArrival = {
               id: chunk[i].id,
               name: chunk[i].name,
-              arrivals
+              arrivals: rawStop.arrivals
             };
             results.push(stopData);
             
@@ -144,14 +133,8 @@
     }
   }
 
-  function toggleHiddenRoute(stopId: string, route: string) {
-    if (!hiddenRoutes[stopId]) hiddenRoutes[stopId] = [];
-    const index = hiddenRoutes[stopId].indexOf(route);
-    if (index > -1) {
-      hiddenRoutes[stopId].splice(index, 1);
-    } else {
-      hiddenRoutes[stopId].push(route);
-    }
+  function toggleHiddenRoute(stopId: string, key: string) {
+    hiddenRoutes[stopId] = toggleHidden(hiddenRoutes[stopId] || [], key);
     localStorage.setItem('hiddenRoutes', JSON.stringify(hiddenRoutes));
     // No need for force update, reactive state will handle it
   }

@@ -1,13 +1,14 @@
+export interface ArrivalEntry {
+  time: number; // Unix epoch milliseconds, as sent by the API
+  isLowEntry?: boolean;
+}
+
 export interface StopArrival {
   id: string;
   name: string;
   arrivals: {
     [type: string]: {
-      [route: string]: Array<{
-        time: number; // Timestamp in milliseconds
-        timeString?: string; // Original ISO string if needed for display
-        isLowEntry?: boolean;
-      }>;
+      [route: string]: ArrivalEntry[];
     };
   };
 }
@@ -17,10 +18,7 @@ export interface RawStopArrival {
   name?: string;
   arrivals?: {
     [type: string]: {
-      [route: string]: Array<{
-        time: string; // ISO string from API
-        isLowEntry?: boolean;
-      }>;
+      [route: string]: ArrivalEntry[];
     };
   };
 }

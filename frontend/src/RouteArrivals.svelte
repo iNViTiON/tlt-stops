@@ -1,8 +1,9 @@
 <script lang="ts">
   import { currentTime } from './lib/stores';
+  import type { ArrivalEntry } from './lib/types';
   export let type: string;
   export let route: string;
-  export let arrivals: Array<{ time: number; timeString?: string; isLowEntry?: boolean }>;
+  export let arrivals: ArrivalEntry[];
 
   function getIcon(type: string): string {
     switch (type) {

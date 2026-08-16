@@ -3,7 +3,9 @@ main = "build/worker/shim.mjs"
 compatibility_date = "2025-11-04"
 
 [build]
-command = "cargo install worker-build && worker-build --release"
+# worker-build comes from the dev shell (flake.nix). Outside Nix, install it
+# once with `cargo install worker-build`.
+command = "worker-build --release"
 dcommand = "worker-build --dev"
 rcommand = "worker-build --release"
 

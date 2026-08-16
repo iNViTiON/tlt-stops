@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import StopCard from './StopCard.svelte';
   import type { StopArrival, FavoriteStop, RawStopArrival } from './lib/types';
+  import { isHiddenRoute, toggleHidden } from './lib/hiddenRoutes';
 
   let types = $state<string[]>([]);
   let routes = $state<string[]>([]);
@@ -32,9 +33,9 @@
   function getFirstArrivalTime(stop: StopArrival, stopId: string): number | null {
     const hidden = hiddenRoutes[stopId] || [];
     let minTime: number = Number.MAX_SAFE_INTEGER;
-    for (const types of Object.values(stop.arrivals)) {
-      for (const [route, arrivals] of Object.entries(types)) {
-        if (hidden.includes(route)) continue;
+    for (const [type, routes] of Object.entries(stop.arrivals)) {
+      for (const [route, arrivals] of Object.entries(routes)) {
+        if (isHiddenRoute(hidden, type, route)) continue;
         for (const arrival of arrivals) {
           minTime = Math.min(minTime, arrival.time);
         }
@@ -94,14 +95,8 @@
     }
   }
 
-  function toggleHiddenRoute(stopId: string, route: string) {
-    if (!hiddenRoutes[stopId]) hiddenRoutes[stopId] = [];
-    const index = hiddenRoutes[stopId].indexOf(route);
-    if (index > -1) {
-      hiddenRoutes[stopId].splice(index, 1);
-    } else {
-      hiddenRoutes[stopId].push(route);
-    }
+  function toggleHiddenRoute(stopId: string, key: string) {
+    hiddenRoutes[stopId] = toggleHidden(hiddenRoutes[stopId] || [], key);
     localStorage.setItem('hiddenRoutes', JSON.stringify(hiddenRoutes));
   }
 
@@ -145,22 +140,11 @@
         console.log('API response data:', data);
         const rawStop = data.stops[0];
         if (rawStop && rawStop.arrivals) {
-          // Convert ISO time strings to timestamps
-          const arrivals: StopArrival['arrivals'] = {};
-          for (const [type, routes] of Object.entries(rawStop.arrivals)) {
-            arrivals[type] = {};
-            for (const [route, arrivalList] of Object.entries(routes)) {
-              arrivals[type][route] = arrivalList.map(a => ({
-                time: new Date(a.time).getTime(),
-                timeString: a.time,
-                isLowEntry: a.isLowEntry
-              }));
-            }
-          }
+          // API sends epoch milliseconds — usable as-is, no parsing pass.
           stopData = {
             id: selectedStopId,
             name: rawStop.name || '',
-            arrivals
+            arrivals: rawStop.arrivals
           };
           // Calculate next update time
           const firstArrival = getFirstArrivalTime(stopData, selectedStopId);
@@ -344,6 +328,7 @@
           stop={stopData} 
           hiddenRoutes={hiddenRoutes[selectedStopId] || []}
           selectedRoute={selectedRoute}
+          selectedType={selectedType}
           browsing={true}
           on:toggleHidden={(e) => toggleHiddenRoute(selectedStopId, e.detail)}
         />

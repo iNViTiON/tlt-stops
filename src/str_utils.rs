@@ -2,41 +2,168 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::string::FromUtf8Error;
 
-use chrono::offset::LocalResult;
-use chrono::{NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{Timelike, Utc};
 use memchr::{memchr_iter, memmem};
 use worker::Result;
 
 use crate::models::*;
 use crate::services::*;
 
-pub fn seconds_from_midnight_to_utc_iso(
-    seconds_from_midnight: u32,
-) -> core::result::Result<String, &'static str> {
-    use chrono_tz::Europe::Tallinn;
-    let is_next_day = seconds_from_midnight >= 86400;
-    let seconds_from_midnight = if is_next_day {
-        seconds_from_midnight - 86400
-    } else {
-        seconds_from_midnight
-    };
-    let time = NaiveTime::from_num_seconds_from_midnight_opt(seconds_from_midnight, 0)
-        .ok_or("seconds_from_midnight must be in 0..=86399")?;
+const DAY_SECS: u32 = 86_400;
+/// A departure further in the past than this belongs to the next day.
+const PAST_TOLERANCE_SECS: i32 = 3 * 3600;
+/// A departure further ahead than this belongs to the previous day.
+const FUTURE_TOLERANCE_SECS: i32 = 12 * 3600;
 
-    let today_tallinn = Utc::now().with_timezone(&Tallinn).date_naive();
-    let mut naive_dt = NaiveDateTime::new(today_tallinn, time);
-    if is_next_day {
-        naive_dt = naive_dt
-            .checked_add_days(chrono::Days::new(1))
-            .ok_or("date overflow")?;
+/// Absolute time reference, resolved once per upstream batch.
+///
+/// Upstream reports a departure as seconds from midnight, but which midnight
+/// depends on when you ask: before midnight a 00:10 departure comes as 87000
+/// (service day), after midnight the feed rebases to the new calendar day and
+/// the same departure comes as 600. Anchoring each line to `now` rather than to
+/// a calendar date lands both encodings on the same instant, and costs two
+/// integer compares per arrival instead of two timezone conversions.
+#[derive(Clone, Copy)]
+pub struct DayAnchor {
+    now_ms: i64,
+    now_local_secs: i32,
+}
+
+impl DayAnchor {
+    pub fn now() -> Self {
+        use chrono_tz::Europe::Tallinn;
+        let now = Utc::now();
+        Self::new(
+            now.timestamp_millis(),
+            now.with_timezone(&Tallinn)
+                .time()
+                .num_seconds_from_midnight() as i32,
+        )
     }
 
-    match Tallinn.from_local_datetime(&naive_dt) {
-        LocalResult::Single(dt_tallinn) => Ok(dt_tallinn.with_timezone(&Utc).to_rfc3339()),
-        // If local time is ambiguous (fall-back), pick the earlier occurrence.
-        LocalResult::Ambiguous(earliest, _latest) => Ok(earliest.with_timezone(&Utc).to_rfc3339()),
-        // If local time doesn't exist (spring-forward gap), surface an error.
-        LocalResult::None => Err("Local time does not exist in Tallinn today (DST gap)"),
+    pub fn new(now_ms: i64, now_local_secs: i32) -> Self {
+        Self {
+            now_ms,
+            now_local_secs,
+        }
+    }
+
+    /// Seconds from midnight (either encoding) to Unix epoch milliseconds.
+    ///
+    /// Past departures stay in the past — a bus that left 30s ago must keep
+    /// reading as 30s ago, not roll a day forward.
+    #[inline(always)]
+    pub fn to_epoch_ms(self, seconds_from_midnight: u32) -> i64 {
+        let mut delta = (seconds_from_midnight % DAY_SECS) as i32 - self.now_local_secs;
+        if delta < -PAST_TOLERANCE_SECS {
+            delta += DAY_SECS as i32;
+        } else if delta > FUTURE_TOLERANCE_SECS {
+            delta -= DAY_SECS as i32;
+        }
+        self.now_ms + delta as i64 * 1000
+    }
+}
+
+#[cfg(test)]
+mod day_anchor_tests {
+    use super::DayAnchor;
+
+    /// Arbitrary fixed instant; only deltas matter.
+    const NOW_MS: i64 = 1_786_000_000_000;
+
+    fn at(local_hms: (u32, u32, u32)) -> DayAnchor {
+        let (h, m, s) = local_hms;
+        DayAnchor::new(NOW_MS, (h * 3600 + m * 60 + s) as i32)
+    }
+
+    fn delta_secs(anchor: &DayAnchor, seconds_from_midnight: u32) -> i64 {
+        (anchor.to_epoch_ms(seconds_from_midnight) - NOW_MS) / 1000
+    }
+
+    #[test]
+    fn service_day_encoding_before_midnight() {
+        // 23:55 now, 00:10 departure sent as 86400 + 600
+        assert_eq!(delta_secs(&at((23, 55, 0)), 87_000), 900);
+    }
+
+    #[test]
+    fn rebased_encoding_before_midnight() {
+        // same departure sent as plain 600
+        assert_eq!(delta_secs(&at((23, 55, 0)), 600), 900);
+    }
+
+    #[test]
+    fn service_day_encoding_after_midnight() {
+        // 00:05 now, feed still on yesterday's service day
+        assert_eq!(delta_secs(&at((0, 5, 0)), 87_000), 300);
+    }
+
+    #[test]
+    fn rebased_encoding_after_midnight() {
+        assert_eq!(delta_secs(&at((0, 5, 0)), 600), 300);
+    }
+
+    #[test]
+    fn midday_is_untouched() {
+        assert_eq!(delta_secs(&at((12, 0, 0)), 43_500), 300);
+    }
+
+    #[test]
+    fn recent_past_stays_in_the_past() {
+        // departed 30s ago — must not roll a day forward, frontend renders "Now"
+        assert_eq!(delta_secs(&at((12, 0, 0)), 43_170), -30);
+    }
+
+    #[test]
+    fn ordering_holds_across_midnight() {
+        let anchor = at((23, 55, 0));
+        let late = anchor.to_epoch_ms(86_280); // 23:58
+        let early = anchor.to_epoch_ms(600); // 00:10 next day
+        assert!(late < early);
+    }
+
+    #[test]
+    fn parsed_feed_orders_across_midnight() {
+        use crate::models::{Arrival, StopData};
+        use std::collections::HashMap;
+        use std::rc::Rc;
+
+        let mut stop_map: HashMap<String, Rc<StopData>> = HashMap::new();
+        stop_map.insert(
+            "6601".to_string(),
+            Rc::new(StopData {
+                id: "6601".to_string(),
+                siri_id: "6601".to_string(),
+                name: Rc::new("Test stop".to_string()),
+            }),
+        );
+
+        // 23:58 tonight, then 00:10 tomorrow sent rebased as 600.
+        let feed = b"Transport,RouteNum,ExpectedTimeInSeconds,ScheduleTimeInSeconds,6601,version20201024\n\
+                     stop,6601\n\
+                     bus,23,86280,86280,a,b,N\n\
+                     bus,23,600,600,a,b,Z\n";
+
+        let anchor = at((23, 55, 0));
+        let stops: Vec<_> = super::split_arrival_by_stops(feed)
+            .flat_map(|segment| {
+                super::extract_arrival_stop_data_from_line(segment, &stop_map, anchor)
+            })
+            .collect();
+
+        assert_eq!(stops.len(), 1);
+        let stop = stops.into_iter().next().unwrap().expect("parse failed");
+        assert_eq!(stop.id, "6601");
+        assert_eq!(stop.name, "Test stop");
+
+        let times: Vec<i64> = stop.arrivals["bus"]["23"]
+            .iter()
+            .map(|arrival| match arrival {
+                Arrival::RegularEntry(time) | Arrival::LowEntry(time) => *time,
+            })
+            .collect();
+        assert_eq!(times, vec![NOW_MS + 180_000, NOW_MS + 900_000]);
+        assert!(matches!(stop.arrivals["bus"]["23"][1], Arrival::LowEntry(_)));
     }
 }
 
@@ -112,6 +239,7 @@ pub fn remove_trailing_newline(input: &[u8]) -> &[u8] {
 
 pub fn extract_arrival_data(
     arrival_line: &[u8],
+    anchor: DayAnchor,
 ) -> core::result::Result<StopArrival, ParsingUpstreamError> {
     let mut start = 0usize;
 
@@ -134,12 +262,11 @@ pub fn extract_arrival_data(
             }
             2 => {
                 expected_time = Some(
-                    seconds_from_midnight_to_utc_iso(
+                    anchor.to_epoch_ms(
                         current
                             .parse::<u32>()
                             .map_err(|_| ParsingUpstreamError::Utf8)?,
-                    )
-                    .map_err(|_| ParsingUpstreamError::Utf8)?,
+                    ),
                 );
             }
             6 => {
@@ -177,6 +304,7 @@ pub fn extract_arrival_data(
 
 pub fn extract_arrival_list_data(
     arrival_lines: &[u8],
+    anchor: DayAnchor,
 ) -> impl Iterator<Item = core::result::Result<StopArrival, ParsingUpstreamError>> {
     let mut start = 0usize;
     memchr_iter(b'\n', arrival_lines)
@@ -187,12 +315,13 @@ pub fn extract_arrival_list_data(
             part
         })
         .filter(|line| !line.is_empty())
-        .map(extract_arrival_data)
+        .map(move |line| extract_arrival_data(line, anchor))
 }
 
 pub fn extract_stop_arrival_list_data(
     stop_lines: &[u8],
     stop_map: &HashMap<String, Rc<StopData>>,
+    anchor: DayAnchor,
 ) -> core::result::Result<StopArrivals, ParsingUpstreamError> {
     let first_new_line_pos = memchr::memchr(b'\n', stop_lines).ok_or(
         ParsingUpstreamError::Error(String::from("invalid arrival data4")),
@@ -211,7 +340,7 @@ pub fn extract_stop_arrival_list_data(
     let mut arrivals = HashMap::new();
     let arrival_lines = &stop_lines[first_new_line_pos + 1..];
 
-    for arrival in extract_arrival_list_data(arrival_lines) {
+    for arrival in extract_arrival_list_data(arrival_lines, anchor) {
         let arrival = arrival?;
         arrivals
             .entry(arrival.r#type.clone())
@@ -236,6 +365,7 @@ pub fn extract_stop_arrival_list_data(
 pub fn extract_arrival_stop_data_from_line(
     line: &[u8],
     stop_map: &HashMap<String, Rc<StopData>>,
+    anchor: DayAnchor,
 ) -> impl Iterator<Item = core::result::Result<StopArrivals, ParsingUpstreamError>> {
     let mut start = 0usize;
     memmem::find_iter(line, b"\nstop,")
@@ -246,7 +376,7 @@ pub fn extract_arrival_stop_data_from_line(
             part
         })
         .filter(|s| memchr::memchr(b'\n', s).is_some())
-        .map(|s| extract_stop_arrival_list_data(s, stop_map))
+        .map(move |s| extract_stop_arrival_list_data(s, stop_map, anchor))
 }
 
 pub fn extract_route_data_from_line(
